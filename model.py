@@ -26,48 +26,50 @@ def build_model(p):
     try:
         model = Model("rcpsp-roc")
 
-        # sets
         J = range(p.numJobs)
-        T = range(p.T)
-        heurT = range(p.heuristicMaxMakespan)
+        T = range(p.heuristicMaxMakespan)
         R = range(p.numRes)
 
         def time_window(j):
-            return [t for t in heurT if t >= p.efts[j] and t <= p.lfts[j]]
+            return [t for t in T if p.efts[j] <= t <= p.lfts[j]]
 
         def time_window_for_demand(j, t):
-            return [tau for tau in heurT if tau >= t and tau <= min(t + p.durations[j], p.heuristicMaxMakespan)]
+            return [tau for tau in T if t <= tau <= min(t + p.durations[j], p.heuristicMaxMakespan)]
 
-        # decision variables
-        # primary
-        xjt = [[model.addVar(lb=0.0, ub=1.0 if t >= p.efts[j] and t <= p.lfts[j] else 0.0, obj=0.0, vtype=GRB.BINARY,
-                             name='x' + str(j) + ',' + str(t)) for t in heurT] for j in J]
-        # derived
-        zrt = [[model.addVar(lb=0.0, ub=p.zmax[r], vtype=GRB.INTEGER, name='z' + str(r) + ',' + str(t)) for t in heurT]
-               for r in R]
+        xjt = [[model.addVar(0.0, 1.0 if p.efts[j] <= t <= p.lfts[j] else 0.0, 0.0, GRB.BINARY, 'x' + str(j) + ',' + str(t)) for t in T] for j in J]
+        zrt = [[model.addVar(0.0, p.zmax[r], 0.0, GRB.INTEGER, 'z' + str(r) + ',' + str(t)) for t in T] for r in R]
 
-        # objective
-        revenue_for_makespan = quicksum([p.u[t] * xjt[p.numJobs - 1][t] for t in time_window(p.numJobs - 1)])
-        required_overtime_costs = quicksum([p.kappa[r] * zrt[r][t] for r in R for t in heurT])
-        model.setObjective(revenue_for_makespan - required_overtime_costs, GRB.MAXIMIZE)
+        def add_objective():
+            revenue_for_makespan = quicksum([p.u[t] * xjt[p.numJobs - 1][t] for t in time_window(p.numJobs - 1)])
+            required_overtime_costs = quicksum([p.kappa[r] * zrt[r][t] for r in R for t in T])
+            model.setObjective(revenue_for_makespan - required_overtime_costs, GRB.MAXIMIZE)
 
-        # constraints
-        model.addConstrs(quicksum([xjt[j][t] for t in heurT]) == 1 for j in J)
+        def add_restrictions():
+            model.addConstrs(quicksum([xjt[j][t] for t in T]) == 1 for j in J)
 
-        def ft(j):
-            return quicksum([xjt[j][t] * t for t in time_window(j)])
+            def ft(j):
+                return quicksum([xjt[j][t] * t for t in time_window(j)])
 
-        model.addConstrs(ft(i) <= ft(j) - p.durations[j] for i in J for j in J if p.adjMx[i][j] == 1)
+            model.addConstrs(ft(i) <= ft(j) - p.durations[j] for i in J for j in J if p.adjMx[i][j] == 1)
 
-        def cumDemand(r, t):
-            return quicksum([p.demands[j][r] * xjt[j][tau] for j in J for tau in time_window_for_demand(j, t)])
+            def cum_demand(r, t):
+                return quicksum([p.demands[j][r] * xjt[j][tau] for j in J for tau in time_window_for_demand(j, t)])
 
-        model.addConstrs(cumDemand(r, t) <= p.capacities[r] + zrt[r][t] for r in R for t in heurT)
+            model.addConstrs(cum_demand(r, t) <= p.capacities[r] + zrt[r][t] for r in R for t in T)
+
+        add_objective()
+        add_restrictions()
 
         return {'model': model, 'xjt': xjt, 'zrt': zrt}
 
     except GurobiError as e:
         print(e)
+
+
+def assert_optimality(model):
+    for bad_status in [GRB.Status.INF_OR_UNBD, GRB.Status.INFEASIBLE, GRB.Status.UNBOUNDED]:
+        assert (model.status != bad_status)
+    assert (model.status == GRB.Status.OPTIMAL)
 
 
 def solve(instance_filename):
@@ -79,13 +81,21 @@ def solve(instance_filename):
     model.update()
     model.optimize()
 
-    xjt_results = [[xjt[j][t].x for t in range(p.heuristicMaxMakespan)] for j in range(p.numJobs)]
-    zrt_results = [[zrt[r][t] for r in range(p.numRes)] for t in range(p.heuristicMaxMakespan)]
-    
+    R = range(p.numRes)
+    T = range(p.heuristicMaxMakespan)
+
+    xjt_results = [[xjt[j][t].x for t in T] for j in range(p.numJobs)]
+    zrt_results = [[zrt[r][t].x for r in R] for t in range(p.heuristicMaxMakespan)]
+
     def st(j):
         return next(t for t, xjt_val in enumerate(xjt_results[j]) if xjt_results[j][t] > 0.0)
 
-    starting_times = [st(j) for j in range(p.numJobs)]
-    obj = st(p.numJobs - 1)
+    revenue = p.u[st(p.numJobs - 1)]
+    overtime_costs = sum([p.kappa[r] * sum([zrt[r][t].x for t in T]) for r in R])
 
-    return {'Sj': starting_times, 'obj': obj}
+    obj = revenue - overtime_costs
+
+    assert_optimality(model)
+    assert (obj == model.objVal)
+
+    return {'Sj': [st(j) for j in range(p.numJobs)], 'oc': overtime_costs, 'revenue': revenue, 'obj': obj}
