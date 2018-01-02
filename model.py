@@ -1,16 +1,13 @@
 import json
+import utils
+import validation
 
 from gurobipy import *
 
 
-class ObjectFromJson:
-    def __init__(self, **entries):
-        self.__dict__.update(entries)
-
-
 def load_project(fn):
     with open(fn, 'r') as fp:
-        return ObjectFromJson(**json.load(fp))
+        return utils.ObjectFromDict(**json.load(fp))
 
 
 def setup_options(opts):
@@ -22,45 +19,57 @@ def setup_options(opts):
     return env
 
 
+def main_sets(p):
+    return [range(p.numJobs), range(p.heuristicMaxMakespan), range(p.numRes)]
+
+
 def build_model(p):
     try:
         model = Model("rcpsp-roc")
 
-        J = range(p.numJobs)
-        T = range(p.heuristicMaxMakespan)
-        R = range(p.numRes)
+        def add_named_constraints(constraint_name_pairs):
+            for cstr, name in constraint_name_pairs:
+                model.addConstr(cstr, name)
+
+        J, T, R = main_sets(p)
+
+        last_job = p.numJobs - 1
 
         def time_window(j):
             return [t for t in T if p.efts[j] <= t <= p.lfts[j]]
 
         def time_window_for_demand(j, t):
-            return [tau for tau in T if t <= tau <= min(t + p.durations[j], p.heuristicMaxMakespan)]
+            return [tau for tau in T if t <= tau <= t + p.durations[j] - 1]
 
-        xjt = [[model.addVar(0.0, 1.0 if p.efts[j] <= t <= p.lfts[j] else 0.0, 0.0, GRB.BINARY, 'x' + str(j) + ',' + str(t)) for t in T] for j in J]
-        zrt = [[model.addVar(0.0, p.zmax[r], 0.0, GRB.INTEGER, 'z' + str(r) + ',' + str(t)) for t in T] for r in R]
+        x = [[model.addVar(0.0, 1.0 if t in time_window(j) else 0.0, 0.0, GRB.BINARY, 'x' + str(j) + ',' + str(t)) for t
+              in T] for j in J]
+        z = [[model.addVar(0.0, p.zmax[r], 0.0, GRB.CONTINUOUS, 'z' + str(r) + ',' + str(t)) for t in T] for r in R]
 
         def add_objective():
-            revenue_for_makespan = quicksum([p.u[t] * xjt[p.numJobs - 1][t] for t in time_window(p.numJobs - 1)])
-            required_overtime_costs = quicksum([p.kappa[r] * zrt[r][t] for r in R for t in T])
+            revenue_for_makespan = quicksum([p.u[t] * x[last_job][t] for t in time_window(last_job)])
+            required_overtime_costs = quicksum([p.kappa[r] * z[r][t] for r in R for t in T])
             model.setObjective(revenue_for_makespan - required_overtime_costs, GRB.MAXIMIZE)
 
         def add_restrictions():
-            model.addConstrs(quicksum([xjt[j][t] for t in T]) == 1 for j in J)
+            add_named_constraints([(quicksum([x[j][t] for t in time_window(j)]) == 1, '{0}_once'.format(j)) for j in J])
 
             def ft(j):
-                return quicksum([xjt[j][t] * t for t in time_window(j)])
+                return quicksum([x[j][t] * t for t in time_window(j)])
 
-            model.addConstrs(ft(i) <= ft(j) - p.durations[j] for i in J for j in J if p.adjMx[i][j] == 1)
+            def st(j):
+                return ft(j) - p.durations[j]
+
+            add_named_constraints([(ft(i) <= st(j), '{0}_before_{1}'.format(i,j)) for i in J for j in J if p.adjMx[i][j] == 1])
 
             def cum_demand(r, t):
-                return quicksum([p.demands[j][r] * xjt[j][tau] for j in J for tau in time_window_for_demand(j, t)])
+                return quicksum([p.demands[j][r] * x[j][tau] for j in J for tau in time_window_for_demand(j, t)])
 
-            model.addConstrs(cum_demand(r, t) <= p.capacities[r] + zrt[r][t] for r in R for t in T)
+            add_named_constraints([(cum_demand(r, t) <= p.capacities[r] + z[r][t], 'rfeas_of_{0}_in_{1}'.format(r,t)) for r in R for t in T])
 
         add_objective()
         add_restrictions()
 
-        return {'model': model, 'xjt': xjt, 'zrt': zrt}
+        return {'model': model, 'xjt': x, 'zrt': z}
 
     except GurobiError as e:
         print(e)
@@ -79,16 +88,24 @@ def solve(instance_filename):
     model, xjt, zrt = [model_compound[key] for key in ['model', 'xjt', 'zrt']]
 
     model.update()
+
+    model.write('mymodel.lp')
+
     model.optimize()
 
-    R = range(p.numRes)
-    T = range(p.heuristicMaxMakespan)
+    J, T, R = main_sets(p)
 
-    xjt_results = [[xjt[j][t].x for t in T] for j in range(p.numJobs)]
-    zrt_results = [[zrt[r][t].x for r in R] for t in range(p.heuristicMaxMakespan)]
+    xjt_results = [[xjt[j][t].x for t in T] for j in J]
+
+    # zrt_results = [[zrt[r][t].x for r in R] for t in T]
+
+    utils.matrix_to_csv(xjt_results, 'xjt_mx.csv')
+
+    def ft(j):
+        return next(t for t, xjt_val in enumerate(xjt_results[j]) if xjt_val > 0.0)
 
     def st(j):
-        return next(t for t, xjt_val in enumerate(xjt_results[j]) if xjt_results[j][t] > 0.0)
+        return ft(j) - p.durations[j]
 
     revenue = p.u[st(p.numJobs - 1)]
     overtime_costs = sum([p.kappa[r] * sum([zrt[r][t].x for t in T]) for r in R])
@@ -98,4 +115,24 @@ def solve(instance_filename):
     assert_optimality(model)
     assert (obj == model.objVal)
 
-    return {'Sj': [st(j) for j in range(p.numJobs)], 'oc': overtime_costs, 'revenue': revenue, 'obj': obj}
+    sts = [st(j) for j in J]
+
+    validation.assert_order_feasibility(p, sts)
+
+    return {'Sj': sts,
+            'Fj': [st(j) + p.durations[j] for j in J],
+            'oc': overtime_costs,
+            'revenue': revenue, 'obj': obj}
+
+
+def serialize_results(results):
+    with open('myschedule.txt', 'w') as fp:
+        ostr = ''
+        for j, stj in enumerate(results['Sj']):
+            ostr += str(j + 1) + '->' + str(stj) + '\n'
+        fp.write(ostr)
+
+    with open('myprofit.txt', 'w') as fp:
+        fp.write(str(results['obj']))
+
+
