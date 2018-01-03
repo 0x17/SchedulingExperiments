@@ -1,6 +1,7 @@
 import sys
 import model
 import validation
+import basedata
 
 
 def main(args):

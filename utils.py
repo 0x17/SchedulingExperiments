@@ -42,3 +42,18 @@ def none_to_zero(val):
 def matrix_to_csv(mx, out_filename):
     with open(out_filename, 'w') as fp:
         fp.write('\n'.join([';'.join([str(cell) for cell in row]) for row in mx]))
+
+
+def slurp(fn):
+    with open(fn, 'r') as fp:
+        return fp.read()
+
+
+def slurp_lines(fn):
+    with open(fn, 'r') as fp:
+        return fp.readlines()
+
+
+def spit(s, fn):
+    with open(fn, 'w') as fp:
+        fp.write(s)
