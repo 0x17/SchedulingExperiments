@@ -1,4 +1,9 @@
 import os
+import json
+
+
+class Nothing:
+    pass
 
 
 class ObjectFromDict:
@@ -6,7 +11,7 @@ class ObjectFromDict:
         self.__dict__.update(entries)
 
 
-def syscall(s):
+def sys_call(s):
     print('SYSCALL: ' + s)
     os.system(s)
 
@@ -57,3 +62,16 @@ def slurp_lines(fn):
 def spit(s, fn):
     with open(fn, 'w') as fp:
         fp.write(s)
+
+
+def spit_dict_as_json(d, fn):
+    with open(fn, 'w') as fp:
+        json.dump(d, fp)
+
+
+def concat_no_dups(a, b):
+    return a.copy() + [e for e in b if e not in a]
+
+
+def stem(path):
+    return os.path.basename(os.path.splitext(path)[0])

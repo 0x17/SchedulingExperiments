@@ -1,37 +1,26 @@
-import json
 import utils
-import validation
 
 from gurobipy import *
 
-
-def load_project(fn):
-    with open(fn, 'r') as fp:
-        return utils.ObjectFromDict(**json.load(fp))
+from project import makespan, load_project
 
 
-def setup_options(opts):
-    env = Env()
-    env.setParam('GRB_DoubleParam_MIPGap', opts['gap'])
-    env.setParam('GRB_DoubleParam_TimeLimit', opts['timeLimit'])
-    env.setParam('GRB_IntParam_DisplayInterval', opts['displayInterval'])
-    env.setParam('GRB_IntParam_Threads', opts['threadCount'])
-    return env
 
 
-def main_sets(p):
-    return [range(p.numJobs), range(p.heuristicMaxMakespan), range(p.numRes)]
-
-
-def build_model(p):
+def build_model(p, deadline=None):
     try:
         model = Model("rcpsp-roc")
+
+        model.params.threads = 0
+        model.params.mipgap = 0
+        model.params.timelimit = GRB.INFINITY
+        model.params.displayinterval = 5
 
         def add_named_constraints(constraint_name_pairs):
             for cstr, name in constraint_name_pairs:
                 model.addConstr(cstr, name)
 
-        J, T, R = main_sets(p)
+        J, T, R = p.main_sets()
 
         last_job = p.numJobs - 1
 
@@ -41,9 +30,9 @@ def build_model(p):
         def time_window_for_demand(j, t):
             return [tau for tau in T if t <= tau <= t + p.durations[j] - 1]
 
-        x = [[model.addVar(0.0, 1.0 if t in time_window(j) else 0.0, 0.0, GRB.BINARY, 'x' + str(j) + ',' + str(t)) for t
-              in T] for j in J]
-        z = [[model.addVar(0.0, p.zmax[r], 0.0, GRB.CONTINUOUS, 'z' + str(r) + ',' + str(t)) for t in T] for r in R]
+        x = [[model.addVar(0.0, 1.0 if t in time_window(j) else 0.0, 0.0, GRB.BINARY, 'x{0},{1}'.format(j, t)) for t in
+              T] for j in J]
+        z = [[model.addVar(0.0, p.zmax[r], 0.0, GRB.CONTINUOUS, 'z{0},{1}'.format(r, t)) for t in T] for r in R]
 
         def add_objective():
             revenue_for_makespan = quicksum([p.u[t] * x[last_job][t] for t in time_window(last_job)])
@@ -59,12 +48,18 @@ def build_model(p):
             def st(j):
                 return ft(j) - p.durations[j]
 
-            add_named_constraints([(ft(i) <= st(j), '{0}_before_{1}'.format(i,j)) for i in J for j in J if p.adjMx[i][j] == 1])
+            add_named_constraints(
+                [(ft(i) <= st(j), '{0}_before_{1}'.format(i, j)) for i in J for j in J if p.adjMx[i][j] == 1])
 
             def cum_demand(r, t):
                 return quicksum([p.demands[j][r] * x[j][tau] for j in J for tau in time_window_for_demand(j, t)])
 
-            add_named_constraints([(cum_demand(r, t) <= p.capacities[r] + z[r][t], 'rfeas_of_{0}_in_{1}'.format(r,t)) for r in R for t in T])
+            add_named_constraints(
+                [(cum_demand(r, t) <= p.capacities[r] + z[r][t], 'rfeas_of_{0}_in_{1}'.format(r, t)) for r in R for t in
+                 T])
+
+            if deadline is not None:
+                model.addConstr(ft(last_job) <= deadline, 'deadline')
 
         add_objective()
         add_restrictions()
@@ -81,19 +76,8 @@ def assert_optimality(model):
     assert (model.status == GRB.Status.OPTIMAL)
 
 
-def solve(instance_filename):
-    p = load_project(instance_filename)
-    model_compound = build_model(p)
-
-    model, xjt, zrt = [model_compound[key] for key in ['model', 'xjt', 'zrt']]
-
-    model.update()
-
-    model.write('mymodel.lp')
-
-    model.optimize()
-
-    J, T, R = main_sets(p)
+def parse_results(p, model, xjt, zrt):
+    J, T, R = p.main_sets()
 
     xjt_results = [[xjt[j][t].x for t in T] for j in J]
 
@@ -117,22 +101,70 @@ def solve(instance_filename):
 
     sts = [st(j) for j in J]
 
-    validation.assert_order_feasibility(p, sts)
+    assert(p.is_order_feasible(sts))
 
     return {'Sj': sts,
             'Fj': [st(j) + p.durations[j] for j in J],
             'oc': overtime_costs,
-            'revenue': revenue, 'obj': obj}
+            'revenue': revenue,
+            'obj': obj}
+
+
+def solve(instance_filename, deadline=None, project_modification_callback=None):
+    p = load_project(instance_filename)
+
+    if project_modification_callback is not None:
+        project_modification_callback(p)
+
+    model_compound = build_model(p, deadline)
+
+    model, xjt, zrt = [model_compound[key] for key in ['model', 'xjt', 'zrt']]
+
+    model.update()
+    model.write('mymodel.lp')
+    model.optimize()
+
+    return parse_results(p, model, xjt, zrt)
 
 
 def serialize_results(results):
     with open('myschedule.txt', 'w') as fp:
         ostr = ''
         for j, stj in enumerate(results['Sj']):
-            ostr += str(j + 1) + '->' + str(stj) + '\n'
+            ostr += '{0}->{1}\n'.format(j + 1, stj)
         fp.write(ostr)
 
     with open('myprofit.txt', 'w') as fp:
         fp.write(str(results['obj']))
 
 
+def results_for_deadline_range(instance_filename, lb, ub):
+    result_dict = {}
+    for deadline in range(lb, ub + 1):
+        result_dict[deadline] = solve(instance_filename, deadline)
+    return result_dict
+
+
+def shortest_with_overtime(instance_filename):
+    def modifier_callback(p):
+        p.kappa = [0.0] * len(p.kappa)
+
+    return solve(instance_filename, None, modifier_callback)
+
+
+def shortest_without_overtime(instance_filename):
+    def modifier_callback(p):
+        p.zmax = [0] * len(p.zmax)
+
+    return solve(instance_filename, None, modifier_callback)
+
+
+def collect_shortest_diffs(path):
+    odict = {}
+    for fn in os.listdir(path):
+        if fn.endswith('.json'):
+            with_ot_ms = makespan(shortest_with_overtime(path + fn))
+            wout_ot_ms = makespan(shortest_without_overtime(path + fn))
+            odict[fn] = {'makespan_with_overtime': with_ot_ms, 'makespan_without_overtime': wout_ot_ms,
+                         'delta': wout_ot_ms - with_ot_ms}
+    return odict

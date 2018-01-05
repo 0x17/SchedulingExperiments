@@ -47,7 +47,3 @@ class TestBasedata(unittest.TestCase):
             if no_key:
                 self.assertEqual(old_lines[ix], line)
         utils.force_delete_file(mod_fn)
-
-
-if __name__ == '__main__':
-    unittest.main()

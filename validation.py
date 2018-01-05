@@ -18,7 +18,7 @@ def validate_schedule_and_profit(inst_filename, schedule_filename='myschedule.tx
         print('Unable to find schedule or profit file for method ' + method + '!')
         utils.batch_del(all_filenames)
     else:
-        utils.syscall('java -jar ScheduleValidator.jar ' + os.getcwd() + os.sep + ' ' + inst_filename)
+        utils.sys_call('java -jar ScheduleValidator.jar ' + os.getcwd() + os.sep + ' ' + inst_filename)
         if os.path.isfile(SKIPFILE_PATH):
             utils.batch_del(all_filenames)
             append_to_invalid_lst()
@@ -27,12 +27,3 @@ def validate_schedule_and_profit(inst_filename, schedule_filename='myschedule.tx
             utils.batch_del(result_filenames)
             print('Valid solution from ' + method + ' for ' + inst_filename)
 
-
-def assert_order_feasibility(p, sts):
-    def preds(p, j):
-        return [i for i in range(p.numJobs) if p.adjMx[i][j] == 1]
-
-    for j, stj in enumerate(sts):
-        pred_fts = [sts[i] + p.durations[i] for i in preds(p, j)]
-        latest_pred_ft = max([0] + pred_fts)
-        assert (latest_pred_ft <= stj)
