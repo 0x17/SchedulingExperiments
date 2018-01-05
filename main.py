@@ -17,7 +17,7 @@ def main(args):
     #visualization.plot_digraph(p)
 
     sts = sgs.serial_schedule_generation_scheme(p, p.topOrder)
-    print(sts)
+    model.solve(p, initial_solution=sts)
 
     # model.serialize_results(results)
     # validation.validate_schedule_and_profit('j3010_1.sm')

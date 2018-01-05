@@ -14,7 +14,7 @@ class Project:
         return [i for i in range(self.numJobs) if self.adjMx[i][j] == 1]
 
     def main_sets(self):
-        return [range(self.numJobs), range(self.heuristicMaxMakespan), range(self.numRes)]
+        return [range(self.numJobs), range(self.heuristicMaxMakespan+1), range(self.numRes)]
 
     def last_pred_ft(self, j, sts):
         return max([sts[i] + self.durations[i] for i in self.preds(j)] + [0])
@@ -32,7 +32,12 @@ def load_project(fn):
 
 
 def makespan(res):
-    return res['Sj'][-1]
+    if type(res) is dict and 'Sj' in res:
+        return res['Sj'][-1]
+    elif type(res) is list:
+        return res[-1]
+    else:
+        return 0
 
 
 def edges_to_adj_mx(num_jobs, edges):

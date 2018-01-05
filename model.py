@@ -2,9 +2,7 @@ import utils
 
 from gurobipy import *
 
-from project import makespan, load_project
-
-
+from project import makespan, load_project, Project
 
 
 def build_model(p, deadline=None):
@@ -101,7 +99,7 @@ def parse_results(p, model, xjt, zrt):
 
     sts = [st(j) for j in J]
 
-    assert(p.is_order_feasible(sts))
+    assert (p.is_order_feasible(sts))
 
     return {'Sj': sts,
             'Fj': [st(j) + p.durations[j] for j in J],
@@ -110,8 +108,15 @@ def parse_results(p, model, xjt, zrt):
             'obj': obj}
 
 
-def solve(instance_filename, deadline=None, project_modification_callback=None):
-    p = load_project(instance_filename)
+def set_mip_starts(p, xjt, initial_solution):
+    assert(makespan(initial_solution) <= p.heuristicMaxMakespan)
+    for j in p.J:
+        for t in p.T:
+            xjt[j][t].start = 1.0 if initial_solution[j] + p.durations[j] == t else 0.0
+
+
+def solve(instance_or_filename, initial_solution=None, deadline=None, project_modification_callback=None):
+    p = instance_or_filename if isinstance(instance_or_filename, Project) else load_project(instance_or_filename)
 
     if project_modification_callback is not None:
         project_modification_callback(p)
@@ -119,6 +124,9 @@ def solve(instance_filename, deadline=None, project_modification_callback=None):
     model_compound = build_model(p, deadline)
 
     model, xjt, zrt = [model_compound[key] for key in ['model', 'xjt', 'zrt']]
+
+    if initial_solution is not None:
+        set_mip_starts(p, xjt, initial_solution)
 
     model.update()
     model.write('mymodel.lp')
@@ -141,7 +149,7 @@ def serialize_results(results):
 def results_for_deadline_range(instance_filename, lb, ub):
     result_dict = {}
     for deadline in range(lb, ub + 1):
-        result_dict[deadline] = solve(instance_filename, deadline)
+        result_dict[deadline] = solve(instance_filename, deadline=deadline)
     return result_dict
 
 
@@ -149,14 +157,14 @@ def shortest_with_overtime(instance_filename):
     def modifier_callback(p):
         p.kappa = [0.0] * len(p.kappa)
 
-    return solve(instance_filename, None, modifier_callback)
+    return solve(instance_filename, project_modification_callback=modifier_callback)
 
 
 def shortest_without_overtime(instance_filename):
     def modifier_callback(p):
         p.zmax = [0] * len(p.zmax)
 
-    return solve(instance_filename, None, modifier_callback)
+    return solve(instance_filename, project_modification_callback=modifier_callback)
 
 
 def collect_shortest_diffs(path):
