@@ -14,10 +14,8 @@ def main(args):
     #print(results)
 
     p = project.load_project('j3010_1.json')
-    #visualization.plot_digraph(p)
-
-    sts = sgs.serial_schedule_generation_scheme(p, p.topOrder)
-    model.solve(p, initial_solution=sts)
+    visualization.plot_digraph(p)
+    model.solve(p, initial_solution=sgs.serial_schedule_generation_scheme(p, p.topOrder))
 
     # model.serialize_results(results)
     # validation.validate_schedule_and_profit('j3010_1.sm')

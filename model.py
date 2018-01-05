@@ -1,7 +1,6 @@
-import utils
-
 from gurobipy import *
 
+import utils
 from project import makespan, load_project, Project
 
 
@@ -109,10 +108,26 @@ def parse_results(p, model, xjt, zrt):
 
 
 def set_mip_starts(p, xjt, initial_solution):
-    assert(makespan(initial_solution) <= p.heuristicMaxMakespan)
+    assert (makespan(initial_solution) <= p.heuristicMaxMakespan)
     for j in p.J:
         for t in p.T:
             xjt[j][t].start = 1.0 if initial_solution[j] + p.durations[j] == t else 0.0
+
+
+def fix_and_destroy_variables(p, xjt, sts):
+    for j in p.J:
+        for t in p.T:
+            if sts[j] is not None:
+                xjt[j][t].lb = 1.0 if sts[j] + p.durations[j] == t else 0.0
+                xjt[j][t].lu = xjt[j][t].lb
+            else:
+                xjt[j][t].lb = 0.0
+                xjt[j][t].ub = 1.0
+
+
+def keep_high_destroy_low_utilization_job_vars(p, xjt, sts):
+    pruned_sts = [None if any(j in p.active_in_low_utilisation_periods(r, sts) for r in p.R) else sts[j] for j in p.J]
+    fix_and_destroy_variables(p, xjt, pruned_sts)
 
 
 def solve(instance_or_filename, initial_solution=None, deadline=None, project_modification_callback=None):
