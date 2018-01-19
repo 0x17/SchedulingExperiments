@@ -1,8 +1,11 @@
 from project import active_periods
 
 
-def serial_schedule_generation_scheme(p, al):
+def serial_schedule_generation_scheme(p, al, zmax = None):
     J, T, R = p.main_sets()
+
+    def zmaxfn(r):
+        return 0 if zmax is None else zmax[r]
 
     def schedule_job_at(j, stj, sts):
         sts[j] = stj
@@ -10,7 +13,7 @@ def serial_schedule_generation_scheme(p, al):
             for t in active_periods(stj, p.durations[j]):
                 res_rem[r][t] -= p.demands[j][r]
 
-    res_rem = [[p.capacities[r]] * p.numPeriods for r in R]
+    res_rem = [[p.capacities[r] + zmaxfn(r)] * p.numPeriods for r in R]
     sts = [None]*p.numJobs
     sts[0] = al[0]
 

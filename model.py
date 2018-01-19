@@ -1,7 +1,11 @@
 from gurobipy import *
 
+import random
+import math
 import utils
+import os
 from project import makespan, load_project, Project
+import sgs
 
 
 def build_model(p, deadline=None):
@@ -97,8 +101,11 @@ def parse_results(p, model, xjt, zrt):
     assert (obj == model.objVal)
 
     sts = [st(j) for j in J]
+    assert (revenue == p.revenue(sts))
+    assert (overtime_costs == p.total_costs(sts))
+    assert (obj == p.profit(sts))
 
-    assert (p.is_order_feasible(sts))
+    assert (p.is_schedule_order_feasible(sts))
 
     return {'Sj': sts,
             'Fj': [st(j) + p.durations[j] for j in J],
@@ -118,19 +125,47 @@ def fix_and_destroy_variables(p, xjt, sts):
     for j in p.J:
         for t in p.T:
             if sts[j] is not None:
-                xjt[j][t].lb = 1.0 if sts[j] + p.durations[j] == t else 0.0
-                xjt[j][t].lu = xjt[j][t].lb
+                fixed_val = 1.0 if sts[j] + p.durations[j] == t else 0.0
+                xjt[j][t].lb = fixed_val
+                xjt[j][t].ub = fixed_val
             else:
                 xjt[j][t].lb = 0.0
                 xjt[j][t].ub = 1.0
 
 
-def keep_high_destroy_low_utilization_job_vars(p, xjt, sts):
-    pruned_sts = [None if any(j in p.active_in_low_utilisation_periods(r, sts) for r in p.R) else sts[j] for j in p.J]
+def fix_and_destroy_jobs(p, xjt, sts, jobs_to_destroy):
+    pruned_sts = [None if j in jobs_to_destroy else sts[j] for j in p.J]
+    pruned_sts[0] = 0
+    pruned_sts[-1] = None
     fix_and_destroy_variables(p, xjt, pruned_sts)
 
 
-def solve(instance_or_filename, initial_solution=None, deadline=None, project_modification_callback=None):
+def collect_jobs_in_most_special_periods(p, sts, specialty_type, max_destroy):
+    jobs_in_special_periods = [p.active_in_special_periods(specialty_type, r, sts) for r in p.R]
+    special_periods_counts = list(enumerate([sum(1 if j in jobs_in_special_periods[r] else 0 for r in p.R) for j in p.J]))
+    special_periods_counts.sort(key=lambda pair: -pair[1])
+    return [pair[0] for pair in special_periods_counts[0:max_destroy]]
+
+
+def collect_random_adjacent_jobs(p, num_center, num_adjacent):
+    job_permutation = list(p.J)
+    random.shuffle(job_permutation)
+    centers = job_permutation[0:num_center - 1]
+    adjacents = []
+    for center in centers:
+        pred_permutation = p.preds(center).copy()
+        random.shuffle(pred_permutation)
+        adjacents += pred_permutation[0:num_adjacent - 1]
+    return centers + adjacents
+
+
+def cback(model, where):
+    pass
+    # if where == GRB.Callback.MIP:
+    #    print('Beste ZF={0}, Runtime={1}'.format(model.cbGet(GRB.Callback.MIP_OBJBST), model.cbGet(GRB.Callback.RUNTIME)))
+
+
+def bootstrap_solve(instance_or_filename, initial_solution=None, deadline=None, project_modification_callback=None):
     p = instance_or_filename if isinstance(instance_or_filename, Project) else load_project(instance_or_filename)
 
     if project_modification_callback is not None:
@@ -145,8 +180,45 @@ def solve(instance_or_filename, initial_solution=None, deadline=None, project_mo
 
     model.update()
     model.write('mymodel.lp')
-    model.optimize()
 
+    return p, model, xjt, zrt
+
+
+# auswahl für reoptimierung:
+# - nach ressourcenverbrauch
+# - zeitfenster berechnet
+def solve_with_fix_and_optimize(instance_or_filename, initial_solution, num_iterations):
+    p, model, xjt, zrt = bootstrap_solve(instance_or_filename)
+    profit = p.profit(initial_solution)
+    res = {'Sj': initial_solution, 'obj': profit}
+    max_destroy = math.floor(p.numJobs * 0.5)
+    specialty_types = list(p.special_periods_collectors.keys())
+    for i in range(num_iterations):
+        hahaha= [ collect_jobs_in_most_special_periods(p, res['Sj'], stype, max_destroy) for stype in specialty_types ]
+
+        rval = random.randint(0, 1)#len(specialty_types))
+        if rval == len(specialty_types):
+            pass
+        else:
+            stype = specialty_types[rval]
+            fix_and_destroy_jobs(p, xjt, res['Sj'], collect_jobs_in_most_special_periods(p, res['Sj'], stype, max_destroy))
+
+        model.update()
+        model.write('mymodel_fixandoptimize.lp')
+        model.optimize(cback)
+        nres = parse_results(p, model, xjt, zrt)
+        nprofit = p.profit(nres['Sj'])
+        if nprofit > profit:
+            print('Improved profit by {0}...'.format(nprofit - profit))
+            res = nres
+            profit = nprofit
+    return res
+
+
+def solve(instance_or_filename, initial_solution=None, deadline=None, project_modification_callback=None):
+    p, model, xjt, zrt = bootstrap_solve(instance_or_filename, initial_solution, deadline,
+                                         project_modification_callback)
+    model.optimize(cback)
     return parse_results(p, model, xjt, zrt)
 
 
@@ -182,12 +254,24 @@ def shortest_without_overtime(instance_filename):
     return solve(instance_filename, project_modification_callback=modifier_callback)
 
 
-def collect_shortest_diffs(path):
+def collect_shortest_diffs_exactly(path):
     odict = {}
     for fn in os.listdir(path):
         if fn.endswith('.json'):
             with_ot_ms = makespan(shortest_with_overtime(path + fn))
             wout_ot_ms = makespan(shortest_without_overtime(path + fn))
+            odict[fn] = {'makespan_with_overtime': with_ot_ms, 'makespan_without_overtime': wout_ot_ms,
+                         'delta': wout_ot_ms - with_ot_ms}
+    return odict
+
+
+def collect_shortest_diffs_heuristically(path):
+    odict = {}
+    for fn in os.listdir(path):
+        if fn.endswith('.json'):
+            p = load_project(path + fn)
+            with_ot_ms = makespan(sgs.serial_schedule_generation_scheme(p, p.topOrder, p.zmax))
+            wout_ot_ms = makespan(sgs.serial_schedule_generation_scheme(p, p.topOrder))
             odict[fn] = {'makespan_with_overtime': with_ot_ms, 'makespan_without_overtime': wout_ot_ms,
                          'delta': wout_ot_ms - with_ot_ms}
     return odict

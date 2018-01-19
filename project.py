@@ -1,4 +1,5 @@
 import json
+import utils
 
 
 class Project:
@@ -6,6 +7,12 @@ class Project:
         self.__dict__.update(fields)
         self.J, self.T, self.R = self.main_sets()
         self.filename = filename
+        self.special_periods_collectors = {
+            'low_residual': self.low_residual_capacity_periods,
+            'high_residual': self.high_residual_capacity_periods,
+            'low_cumulative': self.low_cumulative_demands_periods,
+            'high_cumulative': self.high_cumulative_demands_periods
+        }
 
     def succs(self, i):
         return [j for j in range(self.numJobs) if self.adjMx[i][j] == 1]
@@ -19,7 +26,7 @@ class Project:
     def last_pred_ft(self, j, sts):
         return max([sts[i] + self.durations[i] for i in self.preds(j)] + [0])
 
-    def is_order_feasible(self, sts):
+    def is_schedule_order_feasible(self, sts):
         return all(self.last_pred_ft(j, sts) <= stj for j, stj in enumerate(sts))
 
     def res_feasible_starting_at(self, j, stj, res_rem):
@@ -31,29 +38,62 @@ class Project:
     def job_active_in_periods(self, j, periods, sts):
         return any(t in range(sts[j] + 1, sts[j] + self.durations[j] + 1) for t in periods)
 
-    def remaining_capacity_in_period(self, r, t, sts, oc=0):
-        return self.capacity[r] + oc - sum(self.demands[j][r] for j in self.active_in_period(t, sts))
+    def cumulative_demands_in_period(self, r, t, sts):
+        return sum(self.demands[j][r] for j in self.active_in_period(t, sts))
 
-    def is_res_feasible(self, sts, res_rem=None, oc=0):
-        assert(res_rem is None or oc == 0)
+    def residual_capacity_in_period(self, r, t, sts):
+        return self.capacities[r] - self.cumulative_demands_in_period(r, t, sts)
+
+    def is_schedule_resource_feasible(self, sts, res_rem=None):
         if res_rem is not None:
             return all(res_rem[r][t] >= 0 for t in self.T for r in self.R)
         else:
-            return all(self.remaining_capacity_in_period(r, t, sts, oc) >= 0 for t in self.T for r in self.R)
+            return all(self.residual_capacity_in_period(r, t, sts) >= 0 for t in self.T for r in self.R)
 
     def compute_res_rem_for_schedule(self, sts):
-        return [ [ self.remaining_capacity_in_period(r, t, sts) for t in self.T ] for r in self.R ]
+        return [[self.residual_capacity_in_period(r, t, sts) for t in self.T] for r in self.R]
 
-    def average_remaining_capacity(self, r, sts):
-        return sum(self.remaining_capacity_in_period(r, t, sts) for t in self.T) / len(self.T)
+    def average_resource_spec_common(self, r, sts, func):
+        return utils.average((func(r, t, sts) for t in self.T), len(self.T))
 
-    def low_utilisation_periods(self, r, sts, threshold = None):
-        threshold = threshold if threshold is not None else self.average_remaining_capacity(r, sts)
-        return [ t for t in self.T if self.remaining_capacity_in_period(r, t, sts) <= threshold ]
+    def average_residual_capacity(self, r, sts):
+        return self.average_resource_spec_common(r, sts, self.residual_capacity_in_period)
 
-    def active_in_low_utilisation_periods(self, r, sts, threshold = None):
-        return [j for j in self.J if self.job_active_in_periods(j, self.low_utilisation_periods(r, sts, threshold), sts)]
+    def average_cumulative_demands(self, r, sts):
+        return self.average_resource_spec_common(r, sts, self.cumulative_demands_in_period)
 
+    def edge_periods_common(self, r, sts, low, average_func, in_period_func):
+        threshold = average_func(r, sts)
+        c = -1 if low else 1
+        return [t for t in self.T if in_period_func(r, t, sts) >= c * threshold]
+
+    def cumulative_demands_edge_periods(self, r, sts, low):
+        return self.edge_periods_common(r, sts, low, self.average_cumulative_demands, self.cumulative_demands_in_period)
+
+    def residual_capacity_edge_periods(self, r, sts, low):
+        return self.edge_periods_common(r, sts, low, self.average_residual_capacity, self.residual_capacity_in_period)
+
+    def high_residual_capacity_periods(self, r, sts): return self.residual_capacity_edge_periods(r, sts, False)
+    def low_residual_capacity_periods(self, r, sts): return self.residual_capacity_edge_periods(r, sts, True)
+
+    def high_cumulative_demands_periods(self, r, sts): return self.cumulative_demands_edge_periods(r, sts, False)
+    def low_cumulative_demands_periods(self, r, sts): return self.cumulative_demands_edge_periods(r, sts, True)
+
+    def jobs_active_in_periods(self, sts, periods):
+        return [j for j in self.J if self.job_active_in_periods(j, periods, sts)]
+
+    def active_in_special_periods(self, speciality_type, r, sts):
+        return self.jobs_active_in_periods(sts, self.special_periods_collectors[speciality_type](r, sts))
+
+    def revenue(self, sts):
+        return self.u[makespan(sts)]
+
+    def total_costs(self, sts):
+        return sum(
+            max(-self.residual_capacity_in_period(r, t, sts), 0) * self.kappa[r] for r in self.R for t in self.T)
+
+    def profit(self, sts):
+        return self.revenue(sts) - self.total_costs(sts)
 
 
 def load_project(fn):

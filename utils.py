@@ -75,3 +75,7 @@ def concat_no_dups(a, b):
 
 def stem(path):
     return os.path.basename(os.path.splitext(path)[0])
+
+
+def average(gen_expr, length):
+    return sum(gen_expr) / length
