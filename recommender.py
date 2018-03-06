@@ -1,13 +1,16 @@
-from keras.models import Sequential, load_model, Model
+from keras.models import Sequential, load_model
 from keras.layers import Dense
 
 import numpy as np
 import sys
+import os
 
-np.random.seed(7)
+np.random.seed(23)
+
+jobset = 120
 
 
-def extract_data(start_ix, end_ix, char_fn='characteristics.csv', method_profits_fn='methodprofits.csv'):
+def extract_data(start_ix, end_ix, char_fn=f'characteristics_{jobset}.csv', method_profits_fn=f'methodprofits_{jobset}.csv'):
     ntrain = end_ix - start_ix
 
     char_for_instance = {}
@@ -28,7 +31,7 @@ def extract_data(start_ix, end_ix, char_fn='characteristics.csv', method_profits
         indicators_one_hot = np.ndarray(shape=(ntrain, len(method_names)), dtype=float)
 
         ctr = 0
-        for line in lines[1 + start_ix:end_ix]:
+        for line in lines[1:][start_ix:end_ix]:
             if ctr >= ntrain: break
             if ';' not in line: continue
             parts = line.split(';')
@@ -49,6 +52,8 @@ def construct_model_topology(ninputs, noutputs):
     dnn = Sequential([
         Dense(12, input_dim=ninputs, activation='relu'),
         Dense(8, activation='relu'),
+        Dense(8, activation='relu'),
+        Dense(8, activation='relu'),
         Dense(noutputs, activation='sigmoid')
     ])
     dnn.compile(loss='mse', optimizer='adam', metrics=['accuracy'])
@@ -57,7 +62,7 @@ def construct_model_topology(ninputs, noutputs):
 
 def train_model(dnn, training_data):
     inputs, expected_outputs = training_data
-    dnn.fit(inputs, expected_outputs, batch_size=10, epochs=40, verbose=2)
+    dnn.fit(inputs, expected_outputs, batch_size=32, epochs=100, verbose=2)
 
 
 def evaluate_model(model, validation_data):
@@ -71,18 +76,21 @@ def predict_model(model, data):
 
 
 def setup_and_eval_model(outfn=None):
+    if outfn is not None and os.path.exists(outfn): os.remove(outfn)
+
     solvecount = 270
 
-    training_data = extract_data(0, int(solvecount / 2))
-    validation_data = extract_data(int(solvecount / 2), solvecount)
+    splitpoint = int(solvecount * 0.5)
+    training_data = extract_data(0, splitpoint)
+    validation_data = extract_data(splitpoint, solvecount)
 
     characteristics, profits = training_data
     model = construct_model_topology(characteristics.shape[1], profits.shape[1])
 
     # print(model.to_json())
     train_model(model, training_data)
-    #evaluate_model(model, validation_data)
-    #predict_model(model, validation_data[0])
+    evaluate_model(model, validation_data)
+    # predict_model(model, validation_data[0])
 
     if outfn is not None: model.save(outfn)
 
@@ -107,7 +115,7 @@ def verbalize_prediction(pred):
 
 
 def characteristics_vector_for_instance(instance_name):
-    with open('characteristics.csv', 'r') as fp:
+    with open(f'characteristics_{jobset}.csv', 'r') as fp:
         lines = fp.readlines()
         for line in lines:
             if line.startswith(instance_name):
@@ -116,13 +124,22 @@ def characteristics_vector_for_instance(instance_name):
 
 
 def main(args):
-    #setup_and_eval_model('dnn.h5')
+    setup_and_eval_model(f'dnn_{jobset}.h5')
 
-    #csv_line_to_characteristics_vector('j3013_2;4;639.5;47;32;74;1.5;0.9375;0.197073')
+    # csv_line_to_characteristics_vector('j3013_2;4;639.5;47;32;74;1.5;0.9375;0.197073')
 
-    instname = 'j3013_2' if len(args) <= 1 else args[1]
+    instname = 'j305_9' if len(args) <= 1 else args[1]
     pred = load_and_predict(characteristics_vector_for_instance(instname), 'dnn.h5')
     verbalize_prediction(pred[0])
+
+
+def predict_all():
+    with open(f'methodprofits_{jobset}.csv', 'r') as fp:
+        lines = fp.readlines()[1:]
+        for line in lines:
+            instname = line.split(';')[0]
+            pred = load_and_predict(characteristics_vector_for_instance(instname), 'dnn.h5')
+            verbalize_prediction(pred[0])
 
 
 if __name__ == '__main__':
