@@ -17,6 +17,28 @@ p1 = {
     'precedence_relation': [(0, 1), (0, 2), (1, 3), (1, 4), (0, 5), (3, 5), (2, 4), (2, 8), (4, 6), (4, 7), (5, 9), (6, 9), (7, 9), (8, 9)]
 }
 
+q1 = {
+    'qlevels': range(3),
+    'nqlevels': 3,
+    'qattributes': range(2),
+    'nqattributes': 2,
+    'costs': [0, 5, 3, 2, 1, 7, 10, 6, 1, 0],
+    'base_qualities': [20, 0],
+    'quality_improvements': [
+        {4: 10, 5: 12, 7: 15, 8: 5, 9: 8},
+        {4: 0, 5: 10, 7:15, 8: 0, 9: 20}
+    ],
+    'qlevel_requirement': np.matrix('40 35 30; 20 15 10'),
+    'customers': {
+        'revenue_periods': [12, 13, 14],
+        'revenues': [
+            np.matrix('50 49 48; 40 39 38; 30 29 28'),
+            np.matrix('50 40 30; 49 39 29; 48 38 28'),
+            np.matrix('40 39 38; 39 38 37; 38 37 36')
+        ]
+    }
+}
+
 
 def eligibles(jobs, preds, already_scheduled):
     return [j for j in jobs if j not in already_scheduled and all(i in already_scheduled for i in preds[j])]
@@ -110,13 +132,16 @@ def serial_sgs(p, choices, al):
     return sts
 
 
-def solve_with_gurobi(p):
+def solve_with_gurobi(p, quality_consideration = False):
     def constraints(name_constr_pairs):
         for name, cstr in name_constr_pairs:
             model.addConstr(cstr, name)
 
     try:
-        model = Model("rcpsp-ps")
+        model = Model("rcpsp-ps" + ("-q" if quality_consideration else ""))
+
+        bigM = 99999999
+
         model.params.threads = 0
         model.params.mipgap = 0
         model.params.timelimit = GRB.INFINITY
@@ -127,7 +152,15 @@ def solve_with_gurobi(p):
         def finish_periods_if_active_in(j, t):
             return range(t, min(t + p.durations[j], p.T))
 
-        model.setObjective(quicksum(t * x[p.lastJob, t] for t in p.periods), GRB.MINIMIZE)
+        if quality_consideration:
+            y = np.matrix([[model.addVar(0.0, 1.0, GRB.BINARY, f'y{j}{t}') for t in p.periods] for l in p.qlevels])
+            model.setObjective(quicksum(p.u[l,t] * y[l,t] for t in p.periods for l in p.qlevels) - quicksum(p.costs[j] * quicksum(x[j,t] for t in p.periods) for j in p.actualJobs), GRB.MAXIMIZE)
+            constraints((f'qlevel_reached_{o}_{l}', p.base_qualities[o] + quicksum(p.quality_improvements[o][j] * quicksum(x[j,t] for t in p.periods) for j in p.actualJobs) >= p.qlevel_requirement[o,l] - bigM * (1-quicksum(y[l,t] for t in p.periods))) for o in p.qattributes for l in p.qlevels)
+            constraints((f'sync_x_y_{t}', quicksum(y[l,t] for l in p.qlevels) == x[p.lastJob,t]) for t in p.periods)
+
+        else:
+            model.setObjective(quicksum(t * x[p.lastJob, t] for t in p.periods), GRB.MINIMIZE)
+
         constraints((f'each_once_{j}',
                      quicksum(x[j, t] for t in p.periods) == 1) for j in p.mandatory_jobs)
         constraints((f'decision_triggered_{e}',
