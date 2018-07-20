@@ -2,6 +2,8 @@ from gurobipy import *
 import numpy as np
 import utils
 
+import flexparse
+
 p1 = {
     'njobs': 10,
     'renewables': [0],
@@ -15,6 +17,37 @@ p1 = {
     'precedence_relation': [(0, 1), (0, 2), (1, 3), (1, 4), (0, 5), (3, 5), (2, 4), (2, 8), (4, 6), (4, 7), (5, 9), (6, 9), (7, 9), (8, 9)]
 }
 
+
+def eligibles(jobs, preds, already_scheduled):
+    return [j for j in jobs if j not in already_scheduled and all(i in already_scheduled for i in preds[j])]
+
+
+def topological_sort(preds, jobs):
+    al = []
+    for ix in range(len(jobs)):
+        al.append(min(eligibles(jobs, preds, al)))
+    return al
+
+
+def canonical_choice(p):
+    cd = {}
+
+    def choose_min_nonrenew_demand(eligibles):
+        return utils.argmin([max(p.demands[j, r] for r in p.non_renewables) for j in eligibles])
+
+    def recurse_triggered_decisions(causing_job):
+        for od in p.optional_decisions:
+            if p.decision_causing_jobs[od] == causing_job:
+                cd[od] = choose_min_nonrenew_demand(p.decision_sets[od])
+                recurse_triggered_decisions(cd[od])
+
+    for md in p.mandatory_decisions:
+        cd[md] = choose_min_nonrenew_demand(p.decision_sets[md])
+        recurse_triggered_decisions(cd[md])
+
+    return cd
+
+
 def decorate_project(p):
     jobs = list(range(p['njobs']))
     T = sum(p['durations'])
@@ -23,6 +56,7 @@ def decorate_project(p):
     indecision = [j for dset in p['decision_sets'] for j in dset]
     decisions = list(range(ndecisions))
     mandatory_jobs = [j for j in jobs if j not in indecision and j not in [caused for causing, caused in p['conditional_jobs']]]
+    preds = [[i for i in jobs if adj_mx[i, j]] for j in jobs]
     return {**p, **{
         'jobs': jobs,
         'lastJob': jobs[-1],
@@ -33,15 +67,17 @@ def decorate_project(p):
         'decisions': decisions,
         'indecision': indecision,
         'caused_by': [[i for i in jobs if (i, j) in p['conditional_jobs']] for j in jobs],
-        'preds': [[i for i in jobs if adj_mx[i, j]] for j in jobs],
+        'preds': preds,
         'mandatory_jobs': mandatory_jobs,
         'mandatory_decisions': [e for e in decisions if p['decision_causing_jobs'][e] in mandatory_jobs],
-        'optional_decisions': [e for e in decisions if p['decision_causing_jobs'][e] not in mandatory_jobs]
+        'optional_decisions': [e for e in decisions if p['decision_causing_jobs'][e] not in mandatory_jobs],
+        'topOrder': topological_sort(preds, jobs)
     }}
 
-def serial_sgs(p, chosen_jobs, al):
-    caused_jobs = [caused for causing, caused in p.conditional_jobs if causing in chosen_jobs]
-    impl_jobs_al = [j for j in al if j in (chosen_jobs + caused_jobs + p.mandatory_jobs)]
+
+def serial_sgs(p, choices, al):
+    caused_jobs = [caused for causing, caused in p.conditional_jobs if causing in choices.values()]
+    impl_jobs_al = [j for j in al if j in (list(choices.values()) + caused_jobs + p.mandatory_jobs)]
     enough_nonrenewables = all(sum([p.demands[j, non_renewable] for j in impl_jobs_al]) <= p.capacities[non_renewable] for non_renewable in p.non_renewables)
 
     assert enough_nonrenewables
@@ -122,13 +158,22 @@ def solve_with_gurobi(p):
     except GurobiError as e:
         print(e)
 
-def main():
-    p = utils.ObjectFromDict(**decorate_project(p1))
-    chosen_jobs = [4, 6]
-    al = [0, 2, 5, 3, 1, 7, 4, 6, 8, 9]
-    serial_sgs(p, chosen_jobs, al)
-    solve_with_gurobi(p)
 
+def project_from_disk(fn):
+    return utils.ObjectFromDict(**decorate_project(flexparse.parse_flexible_project(fn)))
+
+
+def main():
+    # p = utils.ObjectFromDict(**decorate_project(p1))
+    p = project_from_disk('Modellendogen0002.DAT')
+
+    # chosen_jobs = [4, 6]
+    # al = [0, 2, 5, 3, 1, 7, 4, 6, 8, 9]
+
+    al = p.topOrder
+    choices = canonical_choice(p)
+    serial_sgs(p, choices, al)
+    solve_with_gurobi(p)
 
 
 if __name__ == '__main__':

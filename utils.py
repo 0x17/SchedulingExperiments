@@ -9,6 +9,10 @@ class Nothing:
 class ObjectFromDict:
     def __init__(self, **entries):
         self.__dict__.update(entries)
+        self.basedict = entries
+
+    def __str__(self):
+        return str(self.basedict)
 
 
 def sys_call(s):
@@ -80,6 +84,7 @@ def stem(path):
 def average(gen_expr, length):
     return sum(gen_expr) / length
 
+
 def extract_csv_lines(csv_contents_or_fn):
     if type(csv_contents_or_fn) is str:
         if '.csv' in csv_contents_or_fn:
@@ -90,23 +95,24 @@ def extract_csv_lines(csv_contents_or_fn):
     elif type(csv_contents_or_fn) is list:
         return csv_contents_or_fn
 
+
 # TODO: Write unit test
 def filter_csv_complement(csv_contents_or_fn, removed_col_names):
     col_names = extract_csv_lines(csv_contents_or_fn)[0].split(';')
     for rcol_name in removed_col_names:
         col_names.remove(rcol_name)
-    return filter_csv(csv_contents_or_fn, column_names = col_names)
+    return filter_csv(csv_contents_or_fn, column_names=col_names)
 
 
-def filter_csv(csv_contents_or_fn, column_names = None, column_indices = None, ofn = None, as_str = False):
+def filter_csv(csv_contents_or_fn, column_names=None, column_indices=None, ofn=None, as_str=False):
     csv_lines = extract_csv_lines(csv_contents_or_fn)
 
     if type(column_names) is list and column_indices is None:
-        column_indices = [ csv_lines[0].split(';').index(column_name) for column_name in column_names ]
+        column_indices = [csv_lines[0].split(';').index(column_name) for column_name in column_names]
 
     olines = []
     for csv_line in csv_lines:
-        take_parts = [ part for ix, part in enumerate(csv_line.split(';')) if ix in column_indices ]
+        take_parts = [part for ix, part in enumerate(csv_line.split(';')) if ix in column_indices]
         olines.append(';'.join(take_parts));
 
     ostr = '\n'.join(olines)
@@ -117,4 +123,9 @@ def filter_csv(csv_contents_or_fn, column_names = None, column_indices = None, o
     return ostr if as_str else olines
 
 
-
+def argmin(elems):
+    minval = min(elems)
+    for ix,elem in enumerate(elems):
+        if elem == minval:
+            return ix
+    return -1
