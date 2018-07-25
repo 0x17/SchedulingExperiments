@@ -27,11 +27,17 @@ def eligibles(jobs, preds, already_scheduled):
     return [j for j in jobs if j not in already_scheduled and all(i in already_scheduled for i in preds[j])]
 
 
-def topological_sort(preds, jobs):
+def top_sort_core(preds, jobs, chooser):
     al = []
     for ix in range(len(jobs)):
-        al.append(min(eligibles(jobs, preds, al)))
+        al.append(chooser(eligibles(jobs, preds, al)))
     return al
+
+
+def random_topological_order(preds, jobs): return top_sort_core(preds, jobs, utils.randelem)
+
+
+def topological_sort(preds, jobs): return top_sort_core(preds, jobs, min)
 
 
 def canonical_choice(p):
@@ -79,7 +85,6 @@ def decorate_project(p):
         'topOrder': topological_sort(preds, jobs)
     }}
 
+
 def project_from_disk(fn):
     return utils.ObjectFromDict(**decorate_project(parse_flexible_project(fn)))
-
-

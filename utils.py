@@ -1,5 +1,10 @@
 import os
 import json
+import random
+
+
+def randelem(coll):
+    return coll[random.randint(0, len(coll) - 1)]
 
 
 class Nothing:
@@ -125,7 +130,26 @@ def filter_csv(csv_contents_or_fn, column_names=None, column_indices=None, ofn=N
 
 def argmin(elems):
     minval = min(elems)
-    for ix,elem in enumerate(elems):
+    for ix, elem in enumerate(elems):
         if elem == minval:
             return ix
     return -1
+
+
+def without(lst, elems):
+    return [elem for elem in lst if elem not in elems]
+
+
+def random_pairs(coll):
+    assert (len(coll) % 2 == 0)
+    pairs = []
+    rem_coll = list(coll)
+    for i in range(int(len(coll) / 2)):
+        a = randelem(rem_coll)
+        b = randelem(without(rem_coll, [a]))
+        pairs.append((a, b))
+        rem_coll = without(rem_coll, [a, b])
+    return pairs
+
+def mapping_range(pairs, domain_vals):
+    return [b for a, b in pairs if a in domain_vals]
