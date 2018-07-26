@@ -7,6 +7,8 @@ from math import exp
 from keras import optimizers
 from keras.layers import Dense
 from keras.models import Sequential
+from keras.wrappers.scikit_learn import KerasRegressor
+from sklearn.model_selection import GridSearchCV
 
 np.random.seed(23)
 tensorflow.set_random_seed(23)
@@ -74,10 +76,7 @@ def exponential_regression_net_tf(xs, ys):
 
 
 def exponential_regression():
-    f = lambda x: 0.5 * exp(0.125 * x)
-    # f = lambda x: 0.5 * math.sin(x)
-    xs = np.array([float(x) for x in np.arange(10, 20, 0.01)])
-    ys = np.array([f(x) for x in xs])
+    xs, ys = expfunc_training_data()
     pys = exponential_regression_net_keras(xs, ys)
     pys2 = exponential_regression_net_tf(xs, ys)
     plt.plot(xs, ys, label='Reference')
@@ -87,5 +86,71 @@ def exponential_regression():
     plt.show()
 
 
+def grid_search_sklearn(builder, training_data):
+    xs, ys = training_data
+    model = KerasRegressor(build_fn=builder, verbose=1)
+    '''return GridSearchCV(estimator=model, param_grid={
+        'optimizer': ['sgd', 'adam'],
+        'batch_size': [5, 10, 20],
+        'epochs': [50],
+        'init': ['normal', 'uniform'],
+        'bias': [False, True],
+        'af': ['relu']
+    }).fit(xs, ys)'''
+    #dict(batch_size=5, epochs=50, init='normal', bias=True, optimizer='adam', af='relu')
+    return GridSearchCV(estimator=model, param_grid={
+        'optimizer': ['adam'],
+        'batch_size': [5],
+        'epochs': [50],
+        'init': ['normal'],
+        'bias': [True],
+        'af': ['relu']
+    }).fit(xs, ys)
+
+def exponential_regression_net_keras_builder():
+    def builder(optimizer, init, bias, af):
+        #layer_sizes = [250, 150, 60, 10, 1]
+        layer_sizes = [250, 1]
+        dnn = Sequential(
+            [Dense(layer_sizes[0], input_dim=1, kernel_initializer=init, activation=af, use_bias=bias)] +
+            [Dense(layer_size, kernel_initializer=init, activation=af, use_bias=bias) for layer_size in layer_sizes[1:-1]] +
+            [Dense(layer_sizes[-1], kernel_initializer=init, activation=af, use_bias=bias)])
+        dnn.compile(loss='mse', optimizer=optimizer)
+        return dnn
+
+    return builder
+
+
+def expfunc_training_data():
+    f = lambda x: 0.5 * exp(0.125 * x)
+    # f = lambda x: 0.5 * math.sin(x)
+    xs = np.array([float(x) for x in np.arange(10, 20, 0.01)])
+    ys = np.array([f(x) for x in xs])
+    return (xs, ys)
+
+
+def exp_regr_grid():
+    xs, ys = expfunc_training_data()
+    res = grid_search_sklearn(exponential_regression_net_keras_builder(), (xs, ys))
+
+    print(f"Best: {res.best_score_} using {res.best_params_}")
+    print("All results:")
+    for mean, stdev, param in zip(res.cv_results_['mean_test_score'], res.cv_results_['std_test_score'], res.cv_results_['params']):
+        print(f"{mean}, {stdev}, {param}")
+
+
+def eval_with_config(config):
+    xs, ys = expfunc_training_data()
+    dnn = exponential_regression_net_keras_builder()(config['optimizer'], config['init'], config['bias'], config['af'])
+    dnn.fit(xs, ys, batch_size=config['batch_size'], epochs=config['epochs'], verbose=2)
+    pys = dnn.predict(xs)
+    plt.plot(xs, ys, label='Reference')
+    plt.plot(xs, pys, label='DNN (Keras)')
+    plt.legend()
+    plt.show()
+
+
 if __name__ == '__main__':
-    exponential_regression()
+    exp_regr_grid()
+    #eval_with_config(dict(batch_size=5, epochs=50, init='normal', bias=True, optimizer='adam', af='relu'))
+    # exponential_regression()

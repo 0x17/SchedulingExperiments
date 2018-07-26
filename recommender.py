@@ -15,11 +15,15 @@ import utils
 
 import sys
 
+from keras.wrappers.scikit_learn import KerasClassifier
+from sklearn.model_selection import GridSearchCV
+
 np.random.seed(23)
 tensorflow.set_random_seed(23)
 
 jobset = 120
-restype = 'gaps'  # 'profits'
+#restype = 'gaps'  # 'profits'
+restype = 'profits'
 
 
 # TODO: plot histograms? für ausprägung von Kenngröße wenn Variante X dominiert?
@@ -102,6 +106,29 @@ def construct_model_topology(ninputs, noutputs):
     print(beautified_json(dnn))
     return dnn
 
+def model_topology_builder(ninputs, noutputs):
+    def builder(optimizer, init):
+        dnn = Sequential([
+            Dense(12, input_dim=ninputs, activation='relu', kernel_initializer=init),
+            Dense(8, activation='relu', kernel_initializer=init),
+            Dense(noutputs, activation='sigmoid', kernel_initializer=init)
+        ])
+        #optimizer = optimizers.adam(lr=0.1, decay=0.001)
+        dnn.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
+        return dnn
+    return builder
+
+
+def grid_search_sklearn(builder, training_data):
+    inputs, expected_outputs = training_data
+    model = KerasClassifier(build_fn=builder, verbose=1)
+    return GridSearchCV(estimator=model, param_grid={
+        'optimizer': ['sgd', 'adam'],
+        'batch_size': [5, 10, 20],
+        'epochs': [50, 100, 150],
+        'init': ['glorot_uniform', 'normal', 'uniform']
+    }).fit(inputs, expected_outputs)
+
 
 def train_model(dnn, training_data):
     inputs, expected_outputs = training_data
@@ -147,13 +174,17 @@ def setup_and_eval_model(outfn=None):
     export_training_data(training_data, 'training_data.csv')
 
     characteristics, profits = training_data
-    model = construct_model_topology(characteristics.shape[1], profits.shape[1])
 
-    train_model(model, training_data)
-    evaluate_model(model, validation_data)
+    res = grid_search_sklearn(model_topology_builder(characteristics.shape[1], profits.shape[1]), training_data)
+    print(res.cv_results_)
+
+    #model = construct_model_topology(characteristics.shape[1], profits.shape[1])
+
+    #train_model(model, training_data)
+    #evaluate_model(model, validation_data)
     # predict_model(model, validation_data[0])
 
-    if outfn is not None: model.save(outfn)
+    #if outfn is not None: model.save(outfn)
 
 
 def csv_line_to_characteristics_vector(csv_line):
@@ -202,10 +233,7 @@ def predict_all():
             verbalize_prediction(pred[0])
 
 
-
-
-
 if __name__ == '__main__':
     main(sys.argv)
     # linear_regression()
-    #exponential_regression()
+    # exponential_regression()
