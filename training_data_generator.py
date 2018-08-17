@@ -1,6 +1,7 @@
 import numpy as np
 from typing import List
 import random
+import pandas as pd
 
 random.seed(23)
 
@@ -31,10 +32,18 @@ def instances_in_both_csv_files(xfn, yfn):
     return [xinstance for xinstance in xinstances if xinstance in yinstances]
 
 
-def generate():
+def generate(use_pandas=False):
     xfn = f'{xtype}_{jobset}.csv'
     yfn = f'{ytype}_{jobset}.csv'
     instances_both_know = instances_in_both_csv_files(xfn, yfn)
     xs = generate_mx(xfn, instances_both_know)
     ys = generate_mx(yfn, instances_both_know)
-    return xs, ys
+    if use_pandas:
+        with open(yfn, 'r') as fp:
+            method_names = fp.readlines()[0].split(';')[1:]
+        xframe = pd.DataFrame(xs, index=instances_both_know, columns=[ f'v{ix+1}' for ix in range(len(xs[0])) ])
+        yframe = pd.DataFrame(ys, index=instances_both_know, columns=method_names)
+        #pd.read_csv('gaps_30.csv', sep=';', index_col=0)
+        return xframe, yframe
+    else:
+        return xs, ys

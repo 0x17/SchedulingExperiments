@@ -139,7 +139,7 @@ def flatten_project(fn, maxT = None):
     for vec in [p.durations, p.capacities, p.kappa, p.zmax]: #, upscaled_revenues]:
         cols += map(str, vec)
 
-    for mx in [p.demands]: #, p.adjMx]:
+    for mx in [p.demands, p.adjMx]:
         cols += map(str, row_major(mx))
 
     return cols
