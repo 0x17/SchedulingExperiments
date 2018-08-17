@@ -1,4 +1,5 @@
 from gurobipy import *
+import numpy as np
 
 
 def solve_with_gurobi(p):
@@ -8,6 +9,8 @@ def solve_with_gurobi(p):
 
     try:
         quality_consideration = hasattr(p, 'qlevels')
+        overtime_consideration = hasattr(p, 'zmax')
+
         model = Model("rcpsp-ps" + ("-q" if quality_consideration else ""))
 
         bigM = 99999999
@@ -18,6 +21,7 @@ def solve_with_gurobi(p):
         model.params.displayinterval = 5
 
         x = np.matrix([[model.addVar(0.0, 1.0, 0.0, GRB.BINARY, f'x{j}_{t}') for t in p.periods] for j in p.jobs])
+        z = np.matrix([[model.addVar(0.0, 1.0, 0.0, GRB.BINARY, f'z{r}_{t}') for t in p.periods] for r in p.renewables]) if overtime_consideration else None
 
         def finish_periods_if_active_in(j, t):
             return range(t, min(t + p.durations[j], p.T))
@@ -27,7 +31,8 @@ def solve_with_gurobi(p):
                 return p.quality_improvements[o][j] if j in p.quality_improvements[o] else 0
 
             y = np.matrix([[model.addVar(0.0, 1.0, 0.0, GRB.BINARY, f'y{l}_{t}') for t in p.periods] for l in p.qlevels])
-            model.setObjective(quicksum(p.u[l, t] * y[l, t] for t in p.periods for l in p.qlevels) - quicksum(p.costs[j] * quicksum(x[j, t] for t in p.periods) for j in p.actual_jobs), GRB.MAXIMIZE)
+            overtime_costs = 0 if not overtime_consideration else quicksum(p.kappa[r] * z[r,t] for r in p.renewables for t in p.periods)
+            model.setObjective(quicksum(p.u[l, t] * y[l, t] for t in p.periods for l in p.qlevels) - quicksum(p.costs[j] * quicksum(x[j, t] for t in p.periods) for j in p.actual_jobs) - overtime_costs, GRB.MAXIMIZE)
             constraints((f'qlevel_reached_{o}_{l}', p.base_qualities[o] + quicksum(qimprove(o, j) * quicksum(x[j, t] for t in p.periods) for j in p.actual_jobs) >= p.qlevel_requirement[o, l] - bigM * (1 - quicksum(y[l, t] for t in p.periods))) for o in p.qattributes for l in p.qlevels)
             constraints((f'sync_x_y_{t}', quicksum(y[l, t] for l in p.qlevels) == x[p.lastJob, t]) for t in p.periods)
 
@@ -43,7 +48,7 @@ def solve_with_gurobi(p):
         constraints((f'precedence_{j}_{i}',
                      quicksum(t * x[i, t] for t in p.periods) <= quicksum((t - p.durations[j]) * x[j, t] for t in p.periods) + p.T * (1 - quicksum(x[j, t] for t in p.periods))) for j in p.jobs for i in p.preds[j])
         constraints((f'renewable_capacity_{r}_{t}',
-                     quicksum(p.demands[j, r] * quicksum(x[j, tau] for tau in finish_periods_if_active_in(j, t)) for j in p.actual_jobs) <= p.capacities[r]) for r in p.renewables for t in p.periods)
+                     quicksum(p.demands[j, r] * quicksum(x[j, tau] for tau in finish_periods_if_active_in(j, t)) for j in p.actual_jobs) <= p.capacities[r] + (z[r,t] if overtime_consideration else 0)) for r in p.renewables for t in p.periods)
         constraints((f'nonrenewable_capacity_{r}',
                      quicksum(p.demands[j, r] * quicksum(x[j, t] for t in p.periods) for j in p.actual_jobs) <= p.capacities[r]) for r in p.non_renewables)
 

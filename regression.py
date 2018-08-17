@@ -5,8 +5,8 @@ import tensorflow
 import tflearn
 from math import exp
 from keras import optimizers
-from keras.layers import Dense
-from keras.models import Sequential
+from keras.layers import Dense, Input, Conv1D, Flatten, Reshape, Conv2D
+from keras.models import Sequential, Model
 from keras.wrappers.scikit_learn import KerasRegressor
 from sklearn.model_selection import GridSearchCV
 
@@ -97,7 +97,7 @@ def grid_search_sklearn(builder, training_data):
         'bias': [False, True],
         'af': ['relu']
     }).fit(xs, ys)'''
-    #dict(batch_size=5, epochs=50, init='normal', bias=True, optimizer='adam', af='relu')
+    # dict(batch_size=5, epochs=50, init='normal', bias=True, optimizer='adam', af='relu')
     return GridSearchCV(estimator=model, param_grid={
         'optimizer': ['adam'],
         'batch_size': [5],
@@ -107,13 +107,15 @@ def grid_search_sklearn(builder, training_data):
         'af': ['relu']
     }).fit(xs, ys)
 
+
 def exponential_regression_net_keras_builder():
     def builder(optimizer, init, bias, af):
-        #layer_sizes = [250, 150, 60, 10, 1]
+        # layer_sizes = [250, 150, 60, 10, 1]
         layer_sizes = [250, 1]
         dnn = Sequential(
             [Dense(layer_sizes[0], input_dim=1, kernel_initializer=init, activation=af, use_bias=bias)] +
-            [Dense(layer_size, kernel_initializer=init, activation=af, use_bias=bias) for layer_size in layer_sizes[1:-1]] +
+            [Dense(layer_size, kernel_initializer=init, activation=af, use_bias=bias) for layer_size in
+             layer_sizes[1:-1]] +
             [Dense(layer_sizes[-1], kernel_initializer=init, activation=af, use_bias=bias)])
         dnn.compile(loss='mse', optimizer=optimizer)
         return dnn
@@ -135,7 +137,8 @@ def exp_regr_grid():
 
     print(f"Best: {res.best_score_} using {res.best_params_}")
     print("All results:")
-    for mean, stdev, param in zip(res.cv_results_['mean_test_score'], res.cv_results_['std_test_score'], res.cv_results_['params']):
+    for mean, stdev, param in zip(res.cv_results_['mean_test_score'], res.cv_results_['std_test_score'],
+                                  res.cv_results_['params']):
         print(f"{mean}, {stdev}, {param}")
 
 
@@ -150,7 +153,54 @@ def eval_with_config(config):
     plt.show()
 
 
+def test_weight_sharing():
+    def dnn_with_conv1d():
+        return Sequential([Conv1D(filters=2, kernel_size=3, strides=3, activation='linear', input_shape=(12, 1)),
+                          Flatten(),
+                          Reshape((8, 1), input_shape=(8,)),
+                          Conv1D(2, 2, strides=2, activation='relu', input_shape=(8, 1)),
+                          Flatten(),
+                          Dense(10, activation='relu'),
+                          Dense(1, activation='linear')])
+
+    def dnn_with_conv2d():
+        return Sequential([
+            Conv2D(filters=2, kernel_size=(3,1), strides=(1,1), activation='linear', input_shape=(3, 4, 1), data_format='channels_last'),
+            Reshape((4,2,1)),
+            Conv2D(filters=2, kernel_size=(1,2), strides=(1,2), activation='relu'),
+            Flatten(),
+            Dense(10, activation='relu'),
+            Dense(1, activation='linear')
+        ])
+    dnn = dnn_with_conv2d()
+    dnn.compile(loss='mse', optimizer='adam')
+    dnn.summary()
+
+    return
+
+    xs = np.expand_dims(np.array([[0, 0, 2, 1, 0, 5, 4, 3, 0, 0, 0, 6],
+                                  [0, 0, 2, 1, 0, 0, 4, 3, 0, 0, 5, 6],
+                                  [0, 0, 2, 1, 0, 0, 0, 3, 0, 4, 5, 6]]), axis=2)
+    ys = np.array(np.expand_dims([1, 2, 3], axis=2))
+
+    print(xs)
+
+    # dnn.fit(xs, ys)
+    dnn.fit(xs, ys, batch_size=10, epochs=20, verbose=2)
+
+    from keras.utils import plot_model
+    plot_model(dnn, to_file='model.png', show_shapes=True, show_layer_names=True)
+
+    for layer in dnn.layers:
+        weights = layer.get_weights()
+        print(layer.name, weights)
+
+    pys = dnn.predict(xs)
+    print(pys)
+
+
 if __name__ == '__main__':
-    exp_regr_grid()
-    #eval_with_config(dict(batch_size=5, epochs=50, init='normal', bias=True, optimizer='adam', af='relu'))
+    # exp_regr_grid()
+    test_weight_sharing()
+    # eval_with_config(dict(batch_size=5, epochs=50, init='normal', bias=True, optimizer='adam', af='relu'))
     # exponential_regression()

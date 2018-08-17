@@ -1,24 +1,37 @@
 import numpy as np
 import utils
+import random
 import flexprojects.flexible_project as fp
 
+from typing import List, Dict
 
-def caused_jobs(p, choices):
+
+def caused_jobs(p, choices: Dict[int, int]) -> List[int]:
     return utils.mapping_range(p.conditional_jobs, choices.values())
 
 
-def implemented_jobs(p, choices):
-    return [j for j in p.jobs if j in (list(choices.values()) + caused_jobs(p, choices) + p.mandatory_jobs)]
+def choices_to_v(p, choices: Dict[int, int]) -> List[bool]:
+    return [j in list(choices.values()) + caused_jobs(p, choices) + p.mandatory_jobs for j in p.jobs]
 
 
-def compute_non_renew_demands(p, choice_repr):
-    impl_jobs = implemented_jobs(p, choice_repr) if len(choice_repr) == p.ndecisions else [j for j in p.jobs if choice_repr[j]]
-    return [sum([p.demands[j, non_renewable] for j in impl_jobs]) for non_renewable in p.non_renewables]
+def cumulative_demands_for_v(p, v: List[bool]) -> List[int]:
+    return [sum([p.demands[j, non_renewable] for j in p.jobs if v[j]]) for non_renewable in p.non_renewables]
 
 
-def has_enough_nonrenewables(p, choice_repr):
-    demands = compute_non_renew_demands(p, choice_repr)
+def cumulative_demands_for_choices(p, choices: Dict[int, int]) -> List[int]:
+    return cumulative_demands_for_v(p, choices_to_v(p, choices))
+
+
+def has_enough_nonrenewables(p, choices: Dict[int, int]) -> bool:
+    return enough_renewables_with_demands(p, cumulative_demands_for_choices(p, choices))
+
+
+def enough_renewables_with_demands(p, demands: List[int]) -> bool:
     return all(demands[non_renewable] <= p.capacities[non_renewable] for non_renewable in p.non_renewables)
+
+
+def has_enough_nonrenewables_v(p, v: List[bool]) -> bool:
+    return enough_renewables_with_demands(p, cumulative_demands_for_v(p, v))
 
 
 def initial_project_structure(p, max_tries):
@@ -32,7 +45,7 @@ def initial_project_structure(p, max_tries):
         for k in [k for j in p.jobs for k in p.jobs if v[j] and (j, k) in p.conditional_jobs]:
             v[k] = True
 
-        if has_enough_nonrenewables(p, v):
+        if has_enough_nonrenewables_v(p, v):
             break
     return v
 
@@ -41,15 +54,19 @@ POP_SIZE = 80
 NUM_GENS = 100
 
 
-def choices_from_impl(p, v):
-    return [p.decision_sets[e][k] for e in p.decisions for k in p.jobs if v[p.decision_sets[e][k]]]
+def choices_from_impl(p, v: List[bool]) -> Dict[int, int]:
+    return {e: p.decision_sets[e][k] for e in p.decisions for k in p.jobs if v[p.decision_sets[e][k]]}
 
 
+# Example individual: { ps: [v1, v2, ..., vJ], al: [al1, al2, ..., alJ], fitness: 23.5 }
 class Individual:
-    def __init__(self, p, ps, al):
+    def __init__(self, p, ps: List[bool], al: List[int]):
         self.ps = ps
         self.al = al
         self.fitness = -serial_sgs(p, choices_from_impl(p, ps), al)['obj']
+
+    def update_fitness(self, p):
+        self.fitness = -serial_sgs(p, choices_from_impl(p, self.ps), self.al)['obj']
 
 
 def al_opc(m, f, q):
@@ -86,13 +103,32 @@ def crossover(p, m, f):
     return Individual(p, v, al)
 
 
-# TODO: Implement
+# TODO: Fix and finish implementation
 def mutate(p, indiv):
+    p_small = 0.1
+    temp_ps, temp_al = list(indiv.ps), list(indiv.al)
+    for e in p.decisions:
+        if any(indiv.ps[j] for j in p.decision_causing_jobs[e]):
+            if all(not temp_ps[j] for j in p.decision_causing_jobs[e]):
+                j = utils.randelem(p.decision_sets[e])
+                indiv.ps[j] = temp_ps[j] = True
+            else:
+                m = random.random(0, 1)
+                if m <= p_small:
+                    j = utils.randelem(p.decision_sets[e])
+                    if not temp_ps[j]:
+                        # deaktiviere job der bisher ausgelöst hat
+                        indiv.ps[j] = temp_ps[j] = True
+        elif any(temp_ps[j] for j in p.decision_causing_jobs[e]):
+            # indiv.ps[]
+            pass
+
     return indiv
 
 
 def solve_with_ga(p):
-    pop = [Individual(p, initial_project_structure(p, 128), fp.random_topological_order(p.preds, p.jobs)) for i in range(POP_SIZE)]
+    pop = [Individual(p, initial_project_structure(p, 128), fp.random_topological_order(p.preds, p.jobs)) for i in
+           range(POP_SIZE)]
     for i in range(NUM_GENS):
         pairs = utils.random_pairs(pop)
         children = []
@@ -105,10 +141,13 @@ def solve_with_ga(p):
 def serial_sgs(p, choices, al):
     enough_nonrenewables = has_enough_nonrenewables(p, choices)
     if not enough_nonrenewables:
-        return {'obj': p.T + sum(max(0, sum([p.demands[j, non_renewable] for j in [j for j in al if j in implemented_jobs(p, choices)]]) - p.capacities[non_renewable]) for non_renewable in p.non_renewables)}
+        v = choices_to_v(p, choices)
+        return {'obj': p.T + sum(max(0, sum(
+            [p.demands[j, non_renewable] for j in [j for j in al if v[j]]]) - p.capacities[
+                                         non_renewable]) for non_renewable in p.non_renewables)}
 
-    def latest_pred_finished(j, sts, impl_jobs):
-        return max([sts[i] + p.durations[i] for i in p.preds[j] if i in impl_jobs] + [0])
+    def latest_pred_finished(j, sts, v):
+        return max([sts[i] + p.durations[i] for i in p.preds[j] if v[i]] + [0])
 
     def active_periods(j, stj):
         return range(stj + 1, stj + p.durations[j] + 1)
@@ -125,11 +164,11 @@ def serial_sgs(p, choices, al):
 
     res_rem = np.matrix([[p.capacities[r] for t in p.periods] for r in p.renewables])
 
-    impl_jobs = implemented_jobs(p, choices)
+    v = choices_to_v(p, choices)
 
     for j in al:
-        if j not in impl_jobs: continue
-        t = latest_pred_finished(j, sts, impl_jobs)
+        if not v[j]: continue
+        t = latest_pred_finished(j, sts, v)
         while not enough_capacity(res_rem, t, j): t += 1
         sts[j] = t
         reduce_res_rem(res_rem, j, t)

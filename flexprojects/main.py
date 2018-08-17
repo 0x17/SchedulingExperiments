@@ -3,6 +3,7 @@ import numpy as np
 import utils
 from flexprojects.flexible_project import decorate_project, canonical_choice, decorate_quality_attributes
 from flexprojects.genetic_algorithm import serial_sgs, print_result
+from flexprojects.mip import solve_with_gurobi
 
 p1 = {
     'njobs': 10,
@@ -14,7 +15,13 @@ p1 = {
     'decision_sets': [[3, 4], [6, 7]],
     'decision_causing_jobs': [0, 4],
     'conditional_jobs': [(3, 8)],
-    'precedence_relation': [(0, 1), (0, 2), (1, 3), (1, 4), (0, 5), (3, 5), (2, 4), (2, 8), (4, 6), (4, 7), (5, 9), (6, 9), (7, 9), (8, 9)]
+    'precedence_relation': [(0, 1), (0, 2), (1, 3), (1, 4), (0, 5), (3, 5), (2, 4), (2, 8), (4, 6), (4, 7), (5, 9),
+                            (6, 9), (7, 9), (8, 9)]
+}
+
+o1 = {
+    'zmax': [5, 15],
+    'kappa': [4, 2]
 }
 
 q1 = {
@@ -37,26 +44,34 @@ q1 = {
     }
 }
 
+
 def example_project_with_quality():
     decorated_p1 = decorate_project(p1)
     return utils.ObjectFromDict(**{**decorated_p1, **decorate_quality_attributes(decorated_p1, q1, 0)})
 
+
+def example_project_with_overtime():
+    decorated_p1 = decorate_project(p1)
+    return utils.ObjectFromDict(**{**decorated_p1, **o1})
+
+
 def main():
-    abs_path = "C:\\Users\\a.schnabel\\Seafile\\Dropbox\\Scheduling\\InstanzenLuise\\15\\"
+    # abs_path = "C:\\Users\\a.schnabel\\Seafile\\Dropbox\\Scheduling\\InstanzenLuise\\15\\"
     # p = utils.ObjectFromDict(**decorate_project(p1))
     # p = project_from_disk(abs_path + 'Modellendogen1_1.DAT')  # 'Modellendogen0002.DAT')
 
-    p = example_project_with_quality()
+    #p = example_project_with_quality()
+    p = example_project_with_overtime()
 
     al = p.topOrder
     choices = canonical_choice(p)
 
-    al = [0, 2, 5, 3, 1, 7, 4, 6, 8, 9]
-    choices = {0: 1, 1: 0}
+    # al = [0, 2, 5, 3, 1, 7, 4, 6, 8, 9]
+    # choices = {0: 1, 1: 0}
 
     result = serial_sgs(p, choices, al)
     print_result(result)
-    #solve_with_gurobi(p)
+    # solve_with_gurobi(p)
 
 
 if __name__ == '__main__':

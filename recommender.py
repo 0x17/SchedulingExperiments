@@ -12,18 +12,22 @@ from keras.layers import Dense
 from keras.models import Sequential, load_model
 
 import utils
+import project
 
 import sys
 
 from keras.wrappers.scikit_learn import KerasClassifier
 from sklearn.model_selection import GridSearchCV
 
+import training_data_generator
+
 np.random.seed(23)
 tensorflow.set_random_seed(23)
 
-jobset = 120
-#restype = 'gaps'  # 'profits'
-restype = 'profits'
+jobset = 30  # 120
+# restype = 'gaps'  # 'profits'
+# restype = 'gaps'
+restype = 'gaps'
 
 
 # TODO: plot histograms? für ausprägung von Kenngröße wenn Variante X dominiert?
@@ -83,10 +87,13 @@ def extract_matrices(start_ix, end_ix, char_fn=f'characteristics_{jobset}.csv',
 
     type = restype  # + '_onehot'
 
+    ctr2 = 0
     for ctr, instance in enumerate(data['instances'][start_ix:end_ix]):
-        if ctr >= ntrain: break
-        characteristics[ctr] = char_for_instance[instance]
-        out_mx[ctr] = compute_out_mx_row(results_for_instance[instance], ctr, type)
+        if ctr >= ntrain or instance not in char_for_instance:
+            continue
+        characteristics[ctr2] = char_for_instance[instance]
+        out_mx[ctr2] = compute_out_mx_row(results_for_instance[instance], ctr2, type)
+        ctr2 += 1
 
     return characteristics, out_mx
 
@@ -97,25 +104,29 @@ def beautified_json(dnn):
 
 def construct_model_topology(ninputs, noutputs):
     dnn = Sequential([
-        Dense(12, input_dim=ninputs, activation='relu'),
-        Dense(8, activation='relu'),
+        Dense(24, input_dim=ninputs, activation='relu'),
+        Dense(12, activation='relu'),
         Dense(noutputs, activation='sigmoid')
     ])
-    optimizer = optimizers.adam(lr=0.1, decay=0.001)
-    dnn.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
-    print(beautified_json(dnn))
+    #optimizer = optimizers.adam(lr=0.1, decay=0.001)
+    dnn.compile(loss='mse', optimizer='adam')
+    dnn.summary()
+    #print(beautified_json(dnn))
     return dnn
+
 
 def model_topology_builder(ninputs, noutputs):
     def builder(optimizer, init):
         dnn = Sequential([
-            Dense(12, input_dim=ninputs, activation='relu', kernel_initializer=init),
+            Dense(24, input_dim=ninputs, activation='relu', kernel_initializer=init),
+            Dense(12, activation='relu', kernel_initializer=init),
             Dense(8, activation='relu', kernel_initializer=init),
             Dense(noutputs, activation='sigmoid', kernel_initializer=init)
         ])
-        #optimizer = optimizers.adam(lr=0.1, decay=0.001)
+        # optimizer = optimizers.adam(lr=0.1, decay=0.001)
         dnn.compile(loss='mse', optimizer=optimizer, metrics=['accuracy'])
         return dnn
+
     return builder
 
 
@@ -132,7 +143,7 @@ def grid_search_sklearn(builder, training_data):
 
 def train_model(dnn, training_data):
     inputs, expected_outputs = training_data
-    dnn.fit(inputs, expected_outputs, batch_size=32, epochs=80, verbose=2)
+    dnn.fit(inputs, expected_outputs, batch_size=12, epochs=160, verbose=2)
 
 
 def evaluate_model(model, validation_data):
@@ -162,38 +173,53 @@ def export_training_data(data, outfn):
         fp.write(ostr)
 
 
-def setup_and_eval_model(outfn=None):
+def setup_and_train_validate_model(outfn=None):
     if outfn is not None and os.path.exists(outfn): os.remove(outfn)
 
-    solvecount = 270
+    #solvecount = 270
+    #solvecount = 585
+    #splitpoint = int(solvecount * 1.0)  # int(solvecount * 0.5)
+    #training_data = extract_matrices(0, splitpoint, f'flattened_{jobset}.csv')
+    #training_data = (csv_to_mx())
+    # validation_data = extract_matrices(splitpoint, solvecount, f'flattened_{jobset}.csv')
 
-    splitpoint = int(solvecount * 0.5)
-    training_data = extract_matrices(0, splitpoint)
-    validation_data = extract_matrices(splitpoint, solvecount)
+    #export_training_data(training_data, 'training_data.csv')
 
-    export_training_data(training_data, 'training_data.csv')
+    #characteristics, profits = training_data
 
-    characteristics, profits = training_data
-
-    res = grid_search_sklearn(model_topology_builder(characteristics.shape[1], profits.shape[1]), training_data)
-    print(res.cv_results_)
+    # res = grid_search_sklearn(model_topology_builder(characteristics.shape[1], profits.shape[1]), training_data)
+    # print(res.cv_results_)
 
     #model = construct_model_topology(characteristics.shape[1], profits.shape[1])
 
-    #train_model(model, training_data)
+    xs, ys = training_data_generator.generate()
+
+    split_perc = 0.5
+    split_count = round(len(xs)*split_perc)
+
+    xs_train, ys_train = np.matrix(xs[:split_count]), np.matrix(ys[:split_count])
+    xs_validate, ys_validate = np.matrix(xs[split_count:]), np.matrix(ys[split_count:])
+
+    model = construct_model_topology(xs_train.shape[1], ys_train.shape[1])
+
+    train_model(model, (xs_train, ys_train))
+    scores = model.evaluate(xs_validate, ys_validate)
+    print(scores)
+
     #evaluate_model(model, validation_data)
     # predict_model(model, validation_data[0])
 
-    #if outfn is not None: model.save(outfn)
+    if outfn is not None: model.save(outfn)
 
 
 def csv_line_to_characteristics_vector(csv_line):
     return np.array([float(entry.rstrip()) for entry in csv_line.split(';')[1:]])
 
 
-def load_and_predict(characteristics, infn):
+def load_and_predict(projfn, infn):
+    xs = np.matrix([ float(v) for v in project.flatten_project(projfn) ])
     model = load_model(infn)
-    prediction = model.predict(characteristics, verbose=1)
+    prediction = model.predict(xs, verbose=1)
     print(f'Prediction: {prediction}')
     return prediction
 
@@ -215,13 +241,14 @@ def characteristics_vector_for_instance(instance_name):
 
 
 def main(args):
-    setup_and_eval_model(f'dnn_{jobset}.h5')
+    setup_and_train_validate_model(f'dnn_{jobset}.h5')
 
     # csv_line_to_characteristics_vector('j3013_2;4;639.5;47;32;74;1.5;0.9375;0.197073')
 
-    # instname = 'j305_9' if len(args) <= 1 else args[1]
-    # pred = load_and_predict(characteristics_vector_for_instance(instname), 'dnn.h5')
-    # verbalize_prediction(pred[0])
+    #instname = 'j3010_1.json' if len(args) <= 1 else args[1]
+    #pred = load_and_predict(instname, 'dnn_30.h5')
+    #print(pred)
+    #verbalize_prediction(pred)
 
 
 def predict_all():
@@ -233,7 +260,25 @@ def predict_all():
             verbalize_prediction(pred[0])
 
 
+def flatten_projects(paths, outfn):
+    maxT = max(len(project.load_project(path).T) for path in paths)
+    with open(outfn, 'w') as fp:
+        value_count = len(project.flatten_project(paths[0], maxT))
+        fp.write('instance;' + ';'.join([f'v{ix}' for ix in range(value_count)]) + '\n')
+        for path in paths:
+            instanceName = utils.stem(path)
+            fp.write(instanceName + ';' + ';'.join(project.flatten_project(path, maxT)) + '\n')
+
+
+def big_project_paths(prefix, limit=None):
+    with open(f'methodprofits_{jobset}.csv', 'r') as fp:
+        all_paths = [prefix + line.split(';')[0] + '.json' for line in fp.readlines()[1:]]
+        return all_paths if limit is None else all_paths[:limit]
+
+
 if __name__ == '__main__':
+    flatten_projects(big_project_paths(f'/Users/andreschnabel/Seafile/Dropbox/Scheduling/Projekte/j{jobset}_json/'),
+                     f'flattened_{jobset}.csv')
     main(sys.argv)
     # linear_regression()
     # exponential_regression()

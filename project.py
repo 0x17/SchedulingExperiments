@@ -14,7 +14,7 @@ class Project:
             'high_cumulative': self.high_cumulative_demands_periods
         }
 
-    #region Precedence and Order
+    # region Precedence and Order
     def succs(self, i):
         return [j for j in range(self.numJobs) if self.adjMx[i][j] == 1]
 
@@ -26,14 +26,16 @@ class Project:
 
     def is_schedule_order_feasible(self, sts):
         return all(self.last_pred_ft(j, sts) <= stj for j, stj in enumerate(sts))
-    #endregion
+
+    # endregion
 
     def main_sets(self):
         return [range(self.numJobs), range(self.heuristicMaxMakespan + 1), range(self.numRes)]
 
-    #region Resource consumption and feasibility
+    # region Resource consumption and feasibility
     def res_feasible_starting_at(self, j, stj, res_rem):
-        return all(res_rem[r][t] - self.demands[j][r] >= 0 for t in active_periods(stj, self.durations[j]) for r in self.R)
+        return all(
+            res_rem[r][t] - self.demands[j][r] >= 0 for t in active_periods(stj, self.durations[j]) for r in self.R)
 
     def active_in_period(self, t, sts):
         return [j for j in self.J if sts[j] < t <= sts[j] + self.durations[j]]
@@ -49,9 +51,10 @@ class Project:
 
     def compute_res_rem_for_schedule(self, sts):
         return [[self.residual_capacity_in_period(r, t, sts) for t in self.T] for r in self.R]
-    #endregion
 
-    #region Period resource statistics
+    # endregion
+
+    # region Period resource statistics
     def cumulative_demands_in_period(self, r, t, sts):
         return sum(self.demands[j][r] for j in self.active_in_period(t, sts))
 
@@ -66,9 +69,10 @@ class Project:
 
     def average_cumulative_demands(self, r, sts):
         return self.average_resource_spec_common(r, sts, self.cumulative_demands_in_period)
-    #endregion
 
-    #region Special periods
+    # endregion
+
+    # region Special periods
     def edge_periods_common(self, r, sts, low, average_func, in_period_func):
         threshold = average_func(r, sts)
         c = -1 if low else 1
@@ -80,22 +84,30 @@ class Project:
     def residual_capacity_edge_periods(self, r, sts, low):
         return self.edge_periods_common(r, sts, low, self.average_residual_capacity, self.residual_capacity_in_period)
 
-    def high_residual_capacity_periods(self, r, sts): return self.residual_capacity_edge_periods(r, sts, False)
-    def low_residual_capacity_periods(self, r, sts): return self.residual_capacity_edge_periods(r, sts, True)
+    def high_residual_capacity_periods(self, r, sts):
+        return self.residual_capacity_edge_periods(r, sts, False)
 
-    def high_cumulative_demands_periods(self, r, sts): return self.cumulative_demands_edge_periods(r, sts, False)
-    def low_cumulative_demands_periods(self, r, sts): return self.cumulative_demands_edge_periods(r, sts, True)
-    #endregion
+    def low_residual_capacity_periods(self, r, sts):
+        return self.residual_capacity_edge_periods(r, sts, True)
 
-    #region Jobs in special periods
+    def high_cumulative_demands_periods(self, r, sts):
+        return self.cumulative_demands_edge_periods(r, sts, False)
+
+    def low_cumulative_demands_periods(self, r, sts):
+        return self.cumulative_demands_edge_periods(r, sts, True)
+
+    # endregion
+
+    # region Jobs in special periods
     def jobs_active_in_periods(self, sts, periods):
         return [j for j in self.J if self.job_active_in_periods(j, periods, sts)]
 
     def active_in_special_periods(self, speciality_type, r, sts):
         return self.jobs_active_in_periods(sts, self.special_periods_collectors[speciality_type](r, sts))
-    #endregion
 
-    #region Objective function and terms
+    # endregion
+
+    # region Objective function and terms
     def revenue(self, sts):
         return self.u[makespan(sts)]
 
@@ -105,12 +117,32 @@ class Project:
 
     def profit(self, sts):
         return self.revenue(sts) - self.total_costs(sts)
-    #endregion
+    # endregion
 
 
 def load_project(fn):
     with open(fn, 'r') as fp:
         return Project(fn, **json.load(fp))
+
+
+def row_major(mx):
+    return [val for row in mx for val in row]
+
+
+def flatten_project(fn, maxT = None):
+    cols = []
+    p = load_project(fn)
+
+    maxT = len(p.T) if maxT is None else maxT
+    upscaled_revenues = p.u + [0]*(maxT - len(p.u))
+
+    for vec in [p.durations, p.capacities, p.kappa, p.zmax]: #, upscaled_revenues]:
+        cols += map(str, vec)
+
+    for mx in [p.demands]: #, p.adjMx]:
+        cols += map(str, row_major(mx))
+
+    return cols
 
 
 def makespan(res):
@@ -132,3 +164,7 @@ def adj_mx_to_edges(adj_mx):
 
 def active_periods(stj, dj):
     return range(stj + 1, stj + dj + 1)
+
+
+if __name__ == '__main__':
+    print(flatten_project('j3010_1.json'))
