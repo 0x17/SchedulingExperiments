@@ -79,8 +79,8 @@ class TrainingData:
     def __init__(self, data, split_perc=0.5):
         xs, ys = data
         split_count = round(len(xs) * split_perc)
-        self.train = np.matrix(xs[:split_count]), np.matrix(ys[:split_count])
-        self.validation = np.matrix(xs[split_count:]), np.matrix(ys[split_count:])
+        self.train = xs[:split_count], ys[:split_count]
+        self.validation = xs[split_count:], ys[split_count:]
         self.xs, self.ys = xs, ys
 
 
@@ -115,9 +115,9 @@ def losses_for_hyperparameters(td, params):
     return history.history['loss'][-1], history.history['val_loss'][-1]
 
 
-def load_and_predict(projfn, infn):
-    xs = np.matrix([float(v) for v in project.flatten_project(projfn)])
-    model = load_model(infn)
+def load_and_predict(input, dnn_fn = None):
+    xs = np.matrix([float(v) for v in project.flatten_project(input)]) if type(input) is str else input
+    model = load_model(dnn_fn) if dnn_fn is not None else setup_train_validate_model(dnn_fn)
     prediction = model.predict(xs, verbose=1)
     return prediction
 
@@ -173,7 +173,14 @@ def collect_losses_for_range(start_ix, end_ix, ofn='losses.csv'):
 def main(args):
     # flatten_projects(big_project_paths(f'/Users/andreschnabel/Seafile/Dropbox/Scheduling/Projekte/j{jobset}_json/'), f'flattened_{jobset}.csv')
     #setup_train_validate_model(f'dnn_{jobset}.h5')
-    print(load_and_predict('j3010_1.json', 'dnn_30.h5'))
+    #print(load_and_predict('j3010_1.json', 'dnn_30.h5'))
+    
+    td = load_train_data()
+    res = load_and_predict(td.validation[0], 'dnn_30.h5')
+    df = pd.DataFrame(res, td.validation[1].index, td.validation[1].columns)
+    df.to_csv('predicted_validation.csv')
+    td.validation[1].to_csv('actual_validation.csv')
+
     # sublists = split_list(all_parameter_permutations(pgrid), 10)
     # collect_all_losses()
     #collect_losses_for_range(int(args[1]), int(args[2]))
