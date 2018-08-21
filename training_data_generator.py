@@ -43,13 +43,24 @@ def generate(config, use_pandas=False):
 
 
 def generate_classification_problem(config, use_pandas=False):
+    def indices_of_best_methods(y):
+        return (ix for ix,z in enumerate(y) if z == min(y))
+
     def index_of_best_method(y):
-        return next(ix for ix,z in enumerate(y) if z == min(y))
+        return next(indices_of_best_methods(y))
 
     xs, ys = generate(config, use_pandas)
+
     ys_index_vec = [index_of_best_method(y) for y in ys.values]
     ys_onehot = [ [ ix == best_index for ix in range(ys.shape[1]) ] for best_index in ys_index_vec ]
-    return xs, (pd.DataFrame(ys_onehot, index=ys.index, columns=ys.columns) if use_pandas else ys_onehot)
+
+    ys_indices_vec = [list(indices_of_best_methods(y)) for y in ys.values]
+    ys_multihot = [[ix in best_indices for ix in range(ys.shape[1])] for best_indices in ys_indices_vec]
+
+    ys_categ = ys_onehot
+    #ys_categ = ys_multihot
+
+    return xs, (pd.DataFrame(ys_categ, index=ys.index, columns=ys.columns) if use_pandas else ys_categ)
 
 if __name__ == '__main__':
     config = {
