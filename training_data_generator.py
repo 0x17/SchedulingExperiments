@@ -1,20 +1,15 @@
-import numpy as np
 from typing import List
 import random
 import pandas as pd
 
 random.seed(23)
 
-jobset = 30
-xtype = 'flattened'  # 'characteristics'
-ytype = 'gaps'  # 'profits'
-
-
 def generate_mx(csv_fn: str, instances_both_know: List[str]):
     with open(csv_fn, 'r') as fp:
         lines = fp.readlines()[1:]
         line_for_instance = lambda instance_name: next(line for line in lines if line.split(';')[0] == instance_name)
-        return [[float(x) for x in line_for_instance(instance_name).split(';')[1:]] for instance_name in instances_both_know]
+        return [[float(x) for x in line_for_instance(instance_name).split(';')[1:]] for instance_name in
+                instances_both_know]
 
 
 def instances_in_both_csv_files(xfn, yfn):
@@ -30,9 +25,9 @@ def instances_in_both_csv_files(xfn, yfn):
     return [xinstance for xinstance in xinstances if xinstance in yinstances]
 
 
-def generate(use_pandas=False):
-    xfn = xtype+'_'+str(jobset)+'.csv'
-    yfn = ytype+'_'+str(jobset)+'.csv'
+def generate(config, use_pandas=False):
+    xfn = config['xtype'] + '_' + str(config['jobset']) + '.csv'
+    yfn = config['ytype'] + '_' + str(config['jobset']) + '.csv'
     instances_both_know = instances_in_both_csv_files(xfn, yfn)
     random.shuffle(instances_both_know)
     xs = generate_mx(xfn, instances_both_know)
@@ -40,9 +35,27 @@ def generate(use_pandas=False):
     if use_pandas:
         with open(yfn, 'r') as fp:
             method_names = fp.readlines()[0].split(';')[1:]
-        xframe = pd.DataFrame(xs, index=instances_both_know, columns=[ 'v'+str(ix+1) for ix in range(len(xs[0])) ])
+        xframe = pd.DataFrame(xs, index=instances_both_know, columns=['v' + str(ix + 1) for ix in range(len(xs[0]))])
         yframe = pd.DataFrame(ys, index=instances_both_know, columns=method_names)
-        #pd.read_csv('gaps_30.csv', sep=';', index_col=0)
         return xframe, yframe
     else:
         return xs, ys
+
+
+def generate_classification_problem(config, use_pandas=False):
+    def index_of_best_method(y):
+        return next(ix for ix,z in enumerate(y) if z == min(y))
+
+    xs, ys = generate(config, use_pandas)
+    ys_index_vec = [index_of_best_method(y) for y in ys.values]
+    ys_onehot = [ [ ix == best_index for ix in range(ys.shape[1]) ] for best_index in ys_index_vec ]
+    return xs, (pd.DataFrame(ys_onehot, index=ys.index, columns=ys.columns) if use_pandas else ys_onehot)
+
+if __name__ == '__main__':
+    config = {
+        'xtype': 'flattened',
+        'ytype': 'gaps',
+        'jobset': 30
+    }
+    cp = generate_classification_problem(config, True)
+    print(cp)
