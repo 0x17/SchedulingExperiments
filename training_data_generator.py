@@ -48,7 +48,7 @@ def indices_of_best_methods(y, best_func):
 
 
 def index_of_best_method(y, best_func):
-    return next(indices_of_best_methods(y))
+    return next(indices_of_best_methods(y, best_func))
 
 
 # def one_hot_from_gaps(gaps):
@@ -71,10 +71,6 @@ def generate_classification_problem(config, use_pandas=False, use_one_hot=True):
     return xs, (pd.DataFrame(ys_categ, index=ys.index, columns=ys.columns) if use_pandas else ys_categ)
 
 
-def generate_single_digit_classification_problem(config, use_pandas=False):
-    pass
-
-
 def generate_binary_classification_problem(config, use_pandas=False):
     best_func = min if config['ytype'] == 'gaps' else max
     ls_indices = [3, 4, 5, 6, 7]
@@ -91,9 +87,9 @@ def generate_binary_classification_problem(config, use_pandas=False):
 if __name__ == '__main__':
     config = {
         'xtype': 'flattened',
-        'ytype': 'gaps',
+        'ytype': 'profits', #'gaps',
         'jobset': 30
     }
-    # cp = generate_classification_problem(config, True)
-    cp = generate_binary_classification_problem(config, True)
+    cp = generate_classification_problem(config, True)
+    #cp = generate_binary_classification_problem(config, True)
     print(cp)
