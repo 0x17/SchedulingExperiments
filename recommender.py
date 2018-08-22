@@ -9,14 +9,10 @@ import pandas as pd
 
 from keras.layers import Dense
 from keras.models import Sequential, load_model
-#from keras.wrappers.scikit_learn import KerasRegressor
-# from sklearn.model_selection import GridSearchCV
 
 import project
 import training_data_generator
 import utils
-
-#from joblib import Parallel, delayed
 
 jobset = 30
 # jobset = 120
@@ -32,7 +28,7 @@ def construct_model_topology(ninputs, noutputs, regression_problem):
     ])
 
     if regression_problem: dnn.compile(loss='mape', optimizer='sgd')
-    else: dnn.compile(loss='binary_crossentropy', optimizer='adam', metrics=['acc'])
+    else: dnn.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc'])
 
     dnn.summary()
     return dnn
@@ -47,7 +43,7 @@ def model_topology_builder(ninputs, noutputs, regression_problem):
         ])
 
         if regression_problem: dnn.compile(loss='mape', optimizer=optimizer)
-        else: dnn.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['acc'])
+        else: dnn.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['acc'])
 
         dnn.summary()
         return dnn
@@ -60,6 +56,8 @@ pgrid = {
     'batch_size': [5, 10, 12, 20],
     'epochs': [50, 100, 160],
     'init': ['glorot_uniform', 'normal', 'uniform']
+    # learning rate? (w/ adam and sgd)
+    # decay? (only with adam)
 }
 
 
@@ -76,6 +74,7 @@ def split_list(lst, sublen):
 def load_train_data(regression_problem):
     config = dict(xtype='flattened', ytype=restype, jobset=jobset)
     return training_data_generator.generate(config, True) if regression_problem else training_data_generator.generate_classification_problem(config, True)
+    #return training_data_generator.generate_binary_classification_problem(config, True)
 
 
 def setup_train_validate_model(regression_problem, outfn=None):
@@ -152,21 +151,23 @@ def collect_losses_for_range(start_ix, end_ix, regression_problem, ofn='losses.c
 def main(args):
     np.random.seed(23)
     #flatten_projects(project_paths(f'/Users/andreschnabel/Seafile/Dropbox/Scheduling/Projekte/j{jobset}_json/'), f'flattened_{jobset}.csv')
-    setup_train_validate_model(False, f'dnn_{jobset}.h5')
+    #setup_train_validate_model(False, f'dnn_{jobset}.h5')
     #print(load_and_predict('j3010_1.json', 'dnn_30.h5'))
 
-    xs, true_ys = load_train_data(False)
+    '''xs, true_ys = load_train_data(False)
     true_ys.to_csv('true_values.csv')
 
     predicted_ys = pd.DataFrame(load_and_predict(xs, f'dnn_{jobset}.h5'), true_ys.index, true_ys.columns)
     predicted_ys.to_csv('predicted_values.csv')
 
     predicted_classes = predicted_ys.apply(lambda row: [round(v) for v in row], axis='columns')
-    predicted_classes.to_csv('predicted_classes.csv')
+    predicted_classes.to_csv('predicted_classes.csv')'''
+
+    # diff between predicted and true: how many misclassifications
 
     # sublists = split_list(all_parameter_permutations(pgrid), 10)
 
-    # collect_all_losses()
+    collect_all_losses(False)
     #collect_losses_for_range(int(args[1]), int(args[2]), False)
     #collect_losses_for_range(0, 3, False)
 

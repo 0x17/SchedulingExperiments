@@ -22,8 +22,7 @@ def read_parameters_from_basefile(in_basefile_fn, parameter_names):
 
     return odict
 
-
-def overwrite_parameters_in_basefile(in_basefile_fn, out_basefile_fn, mapping):
+def overwrite_parameters_in_basefile_str(in_basefile_fn, mapping):
     orig_lines = utils.slurp_lines(in_basefile_fn)
     mod_lines = []
 
@@ -31,7 +30,10 @@ def overwrite_parameters_in_basefile(in_basefile_fn, out_basefile_fn, mapping):
         mod_line = line
         keyname, valstr = extract_key_val_for_line(line)
         if keyname in mapping:
-            mod_line = line.replace(valstr, mapping[keyname])
+            mod_line = line.replace(valstr, str(mapping[keyname]))
         mod_lines.append(mod_line)
 
-    utils.spit(''.join(mod_lines), out_basefile_fn)
+    return ''.join(mod_lines)
+
+def overwrite_parameters_in_basefile(in_basefile_fn, out_basefile_fn, mapping):
+    utils.spit(overwrite_parameters_in_basefile_str(in_basefile_fn, mapping), out_basefile_fn)

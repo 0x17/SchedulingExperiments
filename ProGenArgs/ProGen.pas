@@ -72,7 +72,7 @@ BEGIN
     BEGIN
     WRITELN ('number ',exnr);
     STR (exnr,exnrstr);
-    Fname := SI.DFile + exnrstr + '.DAT';
+    Fname := SI.DFile + exnrstr + '.sm';
     Replicate(D.efp,72,'-');
     WRITELN(D.efp,'sample file -->',FName);
     Replicate(D.efp,72,'-');
