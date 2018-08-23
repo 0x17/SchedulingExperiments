@@ -14,21 +14,17 @@ import project
 import training_data_generator
 import utils
 
-jobset = 30
-# jobset = 120
-restype = 'gaps'
-
-def construct_model_topology(ninputs, noutputs, regression_problem):
+def construct_model_topology(ninputs, noutputs, regression_problem, use_one_hot):
     init = 'uniform'
     bias = True
     dnn = Sequential([
         Dense(24, input_dim=ninputs, activation='relu', kernel_initializer=init, use_bias=bias),
         Dense(12, activation='relu', kernel_initializer=init, use_bias=bias),
-        Dense(noutputs, activation=('sigmoid' if regression_problem else 'softmax'), kernel_initializer=init, use_bias=bias)
+        Dense(noutputs, activation=('sigmoid' if regression_problem or not(use_one_hot) else 'softmax'), kernel_initializer=init, use_bias=bias)
     ])
 
     if regression_problem: dnn.compile(loss='mape', optimizer='sgd')
-    else: dnn.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc'])
+    else: dnn.compile(loss=('categorical_crossentropy' if use_one_hot else 'binary_crossentropy'), optimizer='adam', metrics=['acc'])
 
     dnn.summary()
     return dnn
@@ -70,38 +66,41 @@ def split_list(lst, sublen):
     num_sublists = math.ceil(len(lst) / sublen)
     return [lst[sublen * i:sublen * (i + 1)] if i < num_sublists else lst[sublen * i:] for i in range(num_sublists)]
 
+class TrainingData:
+    def __init__(self, xs, ys, validation_split):
+        self.xs, self.ys = xs, ys
+        val_split_index = round(len(xs) * validation_split)
+        self.val_xs, self.val_ys = xs[:val_split_index], ys[:val_split_index]
+        self.train_xs, self.train_ys = xs[val_split_index:], ys[val_split_index:]
+        self.ninputs, self.noutputs = xs.shape[1], ys.shape[1]
 
-def load_train_data(regression_problem):
+def load_train_data(regression_problem, restype, jobset, validation_split, use_one_hot):
     config = dict(xtype='flattened', ytype=restype, jobset=jobset)
-    return training_data_generator.generate(config, True) if regression_problem else training_data_generator.generate_classification_problem(config, True)
-    #return training_data_generator.generate_binary_classification_problem(config, True)
+    xs, ys = training_data_generator.generate(config) if regression_problem else training_data_generator.generate_classification_problem(config, use_one_hot=use_one_hot)
+    return TrainingData(xs, ys, validation_split)
 
 
-def setup_train_validate_model(regression_problem, outfn=None):
+def setup_train_validate_model(regression_problem, restype, jobset, use_one_hot, outfn=None):
     if outfn is not None and os.path.exists(outfn): os.remove(outfn)
 
-    xs, ys = load_train_data(regression_problem)
-
-    ninputs = xs.shape[1]
-    noutputs = ys.shape[1]
-
-    model = construct_model_topology(ninputs, noutputs, regression_problem)
-
-    model.fit(xs, ys, batch_size=10, epochs=100, verbose=2, shuffle=True, validation_split=0.5)
+    td = load_train_data(regression_problem, restype, jobset, 0.5, use_one_hot)
+    model = construct_model_topology(td.ninputs, td.noutputs, regression_problem, use_one_hot)
+    model.fit(td.train_xs, td.train_ys, batch_size=10, epochs=200, verbose=2)
 
     if outfn is not None: model.save(outfn)
 
+    return td
+
 def losses_for_hyperparameters(data, params, regression_problem):
-    xs, ys = data
-    builder = model_topology_builder(xs.shape[1], ys.shape[1], regression_problem)
+    builder = model_topology_builder(data.ninputs, data.noutputs, regression_problem)
     dnn = builder(params['optimizer'], params['init'])
-    history = dnn.fit(xs, ys, batch_size=params['batch_size'], epochs=params['epochs'], shuffle=True, validation_split=0.5)
+    history = dnn.fit(data.train_xs, data.train_ys, batch_size=params['batch_size'], epochs=params['epochs'])
     return history.history['loss'][-1], history.history['val_loss'][-1], history.history['acc'][-1],history.history['val_acc'][-1]
 
 
-def load_and_predict(input, dnn_fn=None):
+def load_and_predict(input, dnn_fn):
     xs = np.matrix([float(v) for v in project.flatten_project(input)]) if type(input) is str else input
-    model = load_model(dnn_fn) if dnn_fn is not None else setup_train_validate_model(dnn_fn)
+    model = load_model(dnn_fn)
     prediction = model.predict(xs, verbose=1)
     return prediction
 
@@ -116,15 +115,15 @@ def flatten_projects(paths, outfn):
             fp.write(instanceName + ';' + ';'.join(project.flatten_project(path, maxT)) + '\n')
 
 
-def project_paths(prefix, limit=None):
-    with open('methodprofits_' + str(jobset) + '.csv', 'r') as fp:
+def project_paths(prefix, jobset, limit=None):
+    with open('profits_' + str(jobset) + '.csv', 'r') as fp:
         all_paths = [prefix + line.split(';')[0] + '.json' for line in fp.readlines()[1:]]
         return all_paths if limit is None else all_paths[:limit]
 
 res_cols = ['train_loss', 'validation_loss', 'train_acc', 'validation_acc']
 
-def collect_all_losses(regression_problem):
-    td = load_train_data(False)
+def collect_all_losses(regression_problem, restype, jobset):
+    td = load_train_data(False, restype, jobset, 0.5, True)
     combinations = all_parameter_combinations(pgrid)
     res = [(params, losses_for_hyperparameters(td, params, regression_problem)) for params in combinations]
     df = pd.DataFrame([list(params.values()) + list(losses) for params, losses in res],
@@ -134,9 +133,9 @@ def collect_all_losses(regression_problem):
     print(df2.sort_values(by=['validation_loss', 'train_loss']))
 
 
-def collect_losses_for_range(start_ix, end_ix, regression_problem, ofn='losses.csv'):
+def collect_losses_for_range(start_ix, end_ix, regression_problem, restype, jobset, ofn='losses.csv'):
     sorted_keys = sorted(list(pgrid.keys()))
-    td = load_train_data(False)
+    td = load_train_data(False, restype, jobset, 0.5, True)
     combinations = all_parameter_combinations(pgrid)[start_ix:end_ix]
     res = [(params, losses_for_hyperparameters(td, params, regression_problem)) for params in combinations]
     ostr = '\n'.join([';'.join([str(v) for v in ([params[k] for k in sorted_keys] + list(losses))]) for params, losses in res]) + '\n'
@@ -147,33 +146,68 @@ def collect_losses_for_range(start_ix, end_ix, regression_problem, ofn='losses.c
         with open(ofn, 'a') as fp:
             fp.write(ostr)
 
+def percentage_correct_in_prediction(caption, true_ys, pred_ys, use_one_hot):
+    correct_count = 0
 
-def main(args):
-    np.random.seed(23)
-    #flatten_projects(project_paths(f'/Users/andreschnabel/Seafile/Dropbox/Scheduling/Projekte/j{jobset}_json/'), f'flattened_{jobset}.csv')
-    #setup_train_validate_model(False, f'dnn_{jobset}.h5')
-    #print(load_and_predict('j3010_1.json', 'dnn_30.h5'))
+    def array_leq(v1, v2):
+        return all(v1[ix] <= v2[ix] for ix in range(len(v1)))
 
-    '''xs, true_ys = load_train_data(False)
-    true_ys.to_csv('true_values.csv')
+    def array_eq(v1, v2):
+        return np.array_equal(v1, v2)
 
-    predicted_ys = pd.DataFrame(load_and_predict(xs, f'dnn_{jobset}.h5'), true_ys.index, true_ys.columns)
-    predicted_ys.to_csv('predicted_values.csv')
+    cmp_func = array_eq if use_one_hot else array_leq
 
+    for index, row in pred_ys.iterrows():
+        true_vals = true_ys.loc[index].values
+        predicted_vals = row.values
+        correct_count += 1 if cmp_func(predicted_vals, true_vals) else 0
+
+    total_count = pred_ys.shape[0]
+
+    print(f'Percentage in {caption} correct: ' + str(correct_count / total_count))
+
+def collect_predictions(xs, ys, jobset):
+    predicted_ys = pd.DataFrame(load_and_predict(xs, f'dnn_{jobset}.h5'), ys.index, ys.columns)
     predicted_classes = predicted_ys.apply(lambda row: [round(v) for v in row], axis='columns')
-    predicted_classes.to_csv('predicted_classes.csv')'''
 
-    # diff between predicted and true: how many misclassifications
+    ys.to_csv('true_values.csv')
+    predicted_ys.to_csv('predicted_values.csv')
+    predicted_classes.to_csv('predicted_classes.csv')
 
-    # sublists = split_list(all_parameter_permutations(pgrid), 10)
+    return predicted_classes
 
-    collect_all_losses(False)
-    #collect_losses_for_range(int(args[1]), int(args[2]), False)
-    #collect_losses_for_range(0, 3, False)
-
-    #td = load_train_data(False)
+def hyperparameter_optimization():
+    #sublists = split_list(all_parameter_permutations(pgrid), 10)
+    #collect_all_losses(False, restype, jobset)
+    #collect_losses_for_range(int(args[1]), int(args[2]), False, restype, jobset)
+    #collect_losses_for_range(0, 3, False, restype, jobset)
+    #td = load_train_data(False, 0.5)
     #losses = losses_for_hyperparameters(td, {'optimizer': 'sgd', 'batch_size': 10, 'epochs': 100, 'init': 'uniform'}, False)
     #print(losses)
+    pass
+
+def main(args):
+    jobset = 30
+    restype = 'profits'
+
+    np.random.seed(23)
+
+    #flatten_projects(project_paths(f'/Users/andreschnabel/Seafile/Dropbox/Scheduling/Projekte/k{jobset}_json/', jobset), f'flattened_{jobset}.csv')
+    use_one_hot = True
+    td = setup_train_validate_model(regression_problem=False, restype=restype, jobset=jobset, use_one_hot=use_one_hot, outfn=f'dnn_{jobset}.h5')
+
+    #pd.read_csv('true_values.csv')
+    #pd.read_csv('predicted_classes.csv')
+
+    percentage_correct_in_prediction('Validation',
+                                     true_ys=td.val_ys,
+                                     pred_ys=collect_predictions(td.val_xs, td.val_ys, jobset),
+                                     use_one_hot=use_one_hot)
+
+    percentage_correct_in_prediction('Training',
+                                     true_ys=td.train_ys,
+                                     pred_ys=collect_predictions(td.train_xs, td.train_ys, jobset),
+                                     use_one_hot=use_one_hot)
 
 
 if __name__ == '__main__':
