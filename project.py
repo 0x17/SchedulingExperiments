@@ -135,8 +135,9 @@ def flatten_project(fn, maxT = None):
 
     maxT = len(p.T) if maxT is None else maxT
     upscaled_revenues = p.u + [0]*(maxT - len(p.u))
+    assert len(upscaled_revenues) == maxT
 
-    for vec in [p.durations, p.capacities, p.kappa, p.zmax]: #, upscaled_revenues]:
+    for vec in [p.durations, p.capacities, p.kappa, p.zmax, upscaled_revenues]:
         cols += map(str, vec)
 
     for mx in [p.demands, p.adjMx]:

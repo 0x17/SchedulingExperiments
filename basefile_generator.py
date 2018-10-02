@@ -16,11 +16,11 @@ def generate_basefiles(grid, template_fn):
 
 if __name__ == '__main__':
     pgrid = {
-        'Complexity': [1.5, 1.8, 2.0],
-        'RRF': [0.25, 0.5, 0.75, 1.0],
-        'RRS': [0.2, 0.5, 0.7, 1.0]
+        'Complexity': [1.25, 1.5, 1.8, 2.0],
+        'RRF': [0.1, 0.25, 0.5, 0.75, 0.9, 1.0],
+        'RRS': [0.125, 0.2, 0.3, 0.5, 0.7, 0.8, 1.0]
     }
 
-    generate_basefiles(pgrid, 'k30.bas')
+    generate_basefiles(pgrid, 'l.bas')
 
 

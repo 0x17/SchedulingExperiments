@@ -10,20 +10,39 @@ import pandas as pd
 from keras.layers import Dense
 from keras.models import Sequential, load_model
 
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+
+import keras.losses
+
 import project
 import training_data_generator
 import utils
 
+import json
+
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
+
+#from bpmll.bp_mll_keras import bp_mll_loss
+#keras.losses.custom_loss = bp_mll_loss
+
 def construct_model_topology(ninputs, noutputs, regression_problem, use_one_hot):
     init = 'uniform'
     bias = True
+    output_activation = 'relu' if regression_problem else 'sigmoid' if not use_one_hot else 'softmax'
     dnn = Sequential([
-        Dense(24, input_dim=ninputs, activation='relu', kernel_initializer=init, use_bias=bias),
-        Dense(12, activation='relu', kernel_initializer=init, use_bias=bias),
-        Dense(noutputs, activation=('sigmoid' if regression_problem or not(use_one_hot) else 'softmax'), kernel_initializer=init, use_bias=bias)
+        Dense(256, input_dim=ninputs, activation='relu', kernel_initializer=init, use_bias=bias),
+        Dense(128, activation='relu', kernel_initializer=init, use_bias=bias),
+        Dense(64, activation='relu', kernel_initializer=init, use_bias=bias),
+        Dense(32, activation='relu', kernel_initializer=init, use_bias=bias),
+        Dense(16, activation='relu', kernel_initializer=init, use_bias=bias),
+        Dense(noutputs, activation=output_activation, kernel_initializer=init, use_bias=bias),
     ])
 
-    if regression_problem: dnn.compile(loss='mape', optimizer='sgd')
+    if regression_problem: dnn.compile(loss='mse', optimizer='adam')
+    #'binary_crossentropy'
+    #'acc'
+    #bp_mll_loss
     else: dnn.compile(loss=('categorical_crossentropy' if use_one_hot else 'binary_crossentropy'), optimizer='adam', metrics=['acc'])
 
     dnn.summary()
@@ -73,19 +92,31 @@ class TrainingData:
         self.val_xs, self.val_ys = xs[:val_split_index], ys[:val_split_index]
         self.train_xs, self.train_ys = xs[val_split_index:], ys[val_split_index:]
         self.ninputs, self.noutputs = xs.shape[1], ys.shape[1]
+        self.index = self.xs.index
 
-def load_train_data(regression_problem, restype, jobset, validation_split, use_one_hot):
+    def val_data(self):
+        return self.val_xs, self.val_ys
+
+def load_train_data(regression_problem, restype, jobset, validation_split, use_one_hot, index=None):
     config = dict(xtype='flattened', ytype=restype, jobset=jobset)
-    xs, ys = training_data_generator.generate(config) if regression_problem else training_data_generator.generate_classification_problem(config, use_one_hot=use_one_hot)
+    xs, ys = training_data_generator.generate(config) if regression_problem else training_data_generator.generate_classification_problem(config, use_one_hot=use_one_hot, index=index)
     return TrainingData(xs, ys, validation_split)
 
+def setup_train_validate_model_scikit(regression_problem, restype, jobset, use_one_hot):
+    td = load_train_data(regression_problem, restype, jobset, 0.1, use_one_hot)
+    knn_clf = RandomForestClassifier()
+    knn_clf.fit(td.train_xs, td.train_ys)
+    percentage_correct_in_prediction('NNClass', td.val_ys, pd.DataFrame(knn_clf.predict(td.val_xs), index=td.val_ys.index, columns=td.val_ys.columns), False)
 
-def setup_train_validate_model(regression_problem, restype, jobset, use_one_hot, outfn=None):
+def setup_train_validate_model(regression_problem, restype, jobset, validation_split, use_one_hot, outfn=None):
     if outfn is not None and os.path.exists(outfn): os.remove(outfn)
 
-    td = load_train_data(regression_problem, restype, jobset, 0.5, use_one_hot)
+    td = load_train_data(regression_problem, restype, jobset, validation_split, use_one_hot)
+
     model = construct_model_topology(td.ninputs, td.noutputs, regression_problem, use_one_hot)
-    model.fit(td.train_xs, td.train_ys, batch_size=10, epochs=200, verbose=2)
+    #es = EarlyStopping(monitor='val_loss', min_delta=1e-3, patience=4, verbose=0, mode='auto')
+    #mc = ModelCheckpoint('best_weights.hdf5', verbose=0, save_best_only=True)
+    model.fit(td.train_xs, td.train_ys, batch_size=5, epochs=100, verbose=2, validation_data=td.val_data())#, callbacks=[es, mc])
 
     if outfn is not None: model.save(outfn)
 
@@ -100,13 +131,15 @@ def losses_for_hyperparameters(data, params, regression_problem):
 
 def load_and_predict(input, dnn_fn):
     xs = np.matrix([float(v) for v in project.flatten_project(input)]) if type(input) is str else input
-    model = load_model(dnn_fn)
+    model = load_model(dnn_fn)#, custom_objects={'bp_mll_loss': bp_mll_loss})
     prediction = model.predict(xs, verbose=1)
     return prediction
 
 
 def flatten_projects(paths, outfn):
-    maxT = max(len(project.load_project(path).T) for path in paths)
+    def dursum(p):
+        return sum(p.durations[j] for j in p.J)+1
+    maxT = max(dursum(project.load_project(path)) for path in paths)
     with open(outfn, 'w') as fp:
         value_count = len(project.flatten_project(paths[0], maxT))
         fp.write('instance;' + ';'.join(['v' + str(ix) for ix in range(value_count)]) + '\n')
@@ -116,7 +149,7 @@ def flatten_projects(paths, outfn):
 
 
 def project_paths(prefix, jobset, limit=None):
-    with open('profits_' + str(jobset) + '.csv', 'r') as fp:
+    with open('optimals_' + str(jobset) + '.csv', 'r') as fp:
         all_paths = [prefix + line.split(';')[0] + '.json' for line in fp.readlines()[1:]]
         return all_paths if limit is None else all_paths[:limit]
 
@@ -149,32 +182,49 @@ def collect_losses_for_range(start_ix, end_ix, regression_problem, restype, jobs
 def percentage_correct_in_prediction(caption, true_ys, pred_ys, use_one_hot):
     correct_count = 0
 
-    def array_leq(v1, v2):
-        return all(v1[ix] <= v2[ix] for ix in range(len(v1)))
+    def array_leq_but_least_one(v1, v2):
+        return all(v1[ix] <= v2[ix] for ix in range(len(v1))) and any(v1[ix] > 0 for ix in range(len(v1)))
 
     def array_eq(v1, v2):
         return np.array_equal(v1, v2)
 
-    cmp_func = array_eq if use_one_hot else array_leq
+    def max_at_same_index(v1, v2):
+        return utils.argmax(v1) == utils.argmax(v2)
+
+    def some_max_at_same_index(v1, v2):
+        maxv1s, maxv2s = utils.argmax_many(v1), utils.argmax_many(v2)
+        return any(maxv1 in maxv2s for maxv1 in maxv1s)
+
+    cmp_func = max_at_same_index if use_one_hot else some_max_at_same_index
+
+    rows = []
+    index_lst = []
 
     for index, row in pred_ys.iterrows():
         true_vals = true_ys.loc[index].values
         predicted_vals = row.values
-        correct_count += 1 if cmp_func(predicted_vals, true_vals) else 0
+        is_correct = cmp_func(predicted_vals, true_vals)
+        rows.append(list(true_vals) + list(predicted_vals) + [is_correct])
+        index_lst.append(index)
+        correct_count += 1 if is_correct else 0
 
     total_count = pred_ys.shape[0]
 
     print(f'Percentage in {caption} correct: ' + str(correct_count / total_count))
 
+    method_names = ('GA3;GA4;LS0;LS3;LS4;GA0').split(';')
+
+    df = pd.DataFrame(data=rows, index=index_lst, columns=method_names+method_names+['correct'])
+
+    df.to_excel(pd.ExcelWriter(caption+'TruePredictedAndCorrect.xlsx'))
+
 def collect_predictions(xs, ys, jobset):
     predicted_ys = pd.DataFrame(load_and_predict(xs, f'dnn_{jobset}.h5'), ys.index, ys.columns)
-    predicted_classes = predicted_ys.apply(lambda row: [round(v) for v in row], axis='columns')
-
-    ys.to_csv('true_values.csv')
-    predicted_ys.to_csv('predicted_values.csv')
-    predicted_classes.to_csv('predicted_classes.csv')
-
-    return predicted_classes
+    #predicted_classes = predicted_ys.apply(lambda row: [round(v) for v in row], axis='columns')
+    #ys.to_csv('true_values.csv')
+    #predicted_ys.to_csv('predicted_values.csv')
+    #predicted_classes.to_csv('predicted_classes.csv')
+    return predicted_ys
 
 def hyperparameter_optimization():
     #sublists = split_list(all_parameter_permutations(pgrid), 10)
@@ -187,19 +237,35 @@ def hyperparameter_optimization():
     pass
 
 def main(args):
-    jobset = 30
-    restype = 'profits'
+    #jobset = 30
+    jobset = 'j30'
+    #restype = 'profits'
+    restype = 'optimals'
 
     np.random.seed(23)
 
-    #flatten_projects(project_paths(f'/Users/andreschnabel/Seafile/Dropbox/Scheduling/Projekte/k{jobset}_json/', jobset), f'flattened_{jobset}.csv')
-    use_one_hot = True
-    td = setup_train_validate_model(regression_problem=False, restype=restype, jobset=jobset, use_one_hot=use_one_hot, outfn=f'dnn_{jobset}.h5')
+    #flatten_projects(project_paths(f'/Users/andreschnabel/Seafile/Dropbox/Scheduling/Projekte/{jobset}_json/', jobset), f'flattened_{jobset}.csv')
+    use_one_hot = False
+
+    td = setup_train_validate_model(regression_problem=True, restype=restype, jobset=jobset, use_one_hot=use_one_hot, validation_split=0.5, outfn=f'dnn_{jobset}.h5')
+    pred_ys = collect_predictions(td.val_xs, td.val_ys, jobset)
+    print()
+
+    #with open('permutation_index.json', 'w') as fp:
+    #    json.dump(list(td.index), fp)
+
+    #td = setup_train_validate_model_scikit(regression_problem=False, restype=restype, jobset=jobset, use_one_hot=use_one_hot)
 
     #pd.read_csv('true_values.csv')
     #pd.read_csv('predicted_classes.csv')
 
-    percentage_correct_in_prediction('Validation',
+    #td = load_train_data(False, restype, jobset, 0.2, use_one_hot=use_one_hot)
+
+    #with open('permutation_index.json', 'r') as fp:
+    #    saved_index = pd.Index(json.load(fp))
+    #td = load_train_data(regression_problem=False, restype=restype, jobset=jobset, use_one_hot=use_one_hot, index=saved_index, validation_split=0.2)
+
+    '''percentage_correct_in_prediction('Validation',
                                      true_ys=td.val_ys,
                                      pred_ys=collect_predictions(td.val_xs, td.val_ys, jobset),
                                      use_one_hot=use_one_hot)
@@ -207,7 +273,7 @@ def main(args):
     percentage_correct_in_prediction('Training',
                                      true_ys=td.train_ys,
                                      pred_ys=collect_predictions(td.train_xs, td.train_ys, jobset),
-                                     use_one_hot=use_one_hot)
+                                     use_one_hot=use_one_hot)'''
 
 
 if __name__ == '__main__':

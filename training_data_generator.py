@@ -16,17 +16,23 @@ def cache_frame(csv_fn):
         df.to_pickle(pkl_fn)
         return df
 
+def limit_to_index_in_both(df1, df2):
+    ix_isect = [ ix for ix in df1.index if ix in df2.index ]
+    return df1.filter(axis='index',items=ix_isect), df2.filter(axis='index',items=ix_isect)
 
-def generate(config):
+
+def generate(config, index = None):
     jobset_str = str(config['jobset'])
     xfn = config['xtype'] + '_' + jobset_str + '.csv'
     yfn = config['ytype'] + '_' + jobset_str + '.csv'
     x_val_frame = cache_frame(xfn)
-    x_char_frame = cache_frame(f'characteristics_k{jobset_str}.csv')
+    x_char_frame = cache_frame(f'characteristics_{jobset_str}.csv')
     xframe = pd.concat([x_val_frame, x_char_frame], axis=1)
+    #xframe = x_char_frame
     yframe = cache_frame(yfn)
-    assert xframe.shape[0] == yframe.shape[0]
-    new_index = np.random.permutation(xframe.index)
+    if xframe.shape[0] != yframe.shape[0]:
+        xframe, yframe = limit_to_index_in_both(xframe, yframe)
+    new_index = index if index is not None else np.random.permutation(xframe.index)
     xframe.reindex(new_index)
     yframe.reindex(new_index)
     return xframe, yframe
@@ -39,24 +45,30 @@ def indices_of_best_methods(y, best_func):
 def index_of_best_method(y, best_func):
     return next(indices_of_best_methods(y, best_func))
 
+def ensure_not_all_one(mx):
+    def random_zero(lst):
+        rix = random.randint(0,len(lst)-1)
+        return [ 0 if rix == ix else v for ix,v in enumerate(lst) ]
+    return [ row if sum(row) < len(row) else random_zero(row) for row in mx ]
 
-def generate_classification_problem(config, use_one_hot=True):
+def generate_classification_problem(config, use_one_hot=True, index=None):
     best_func = min if config['ytype'] == 'gaps' else max
 
-    xs, ys = generate(config)
+    xs, ys = generate(config, index)
 
     ys_index_vec = [index_of_best_method(y, best_func) for y in ys.values]
-    ys_onehot = [[1.0 if ix == best_index else 0.0 for ix in range(ys.shape[1])] for best_index in ys_index_vec]
+    ys_onehot = [[1 if ix == best_index else 0 for ix in range(ys.shape[1])] for best_index in ys_index_vec]
 
     ys_indices_vec = [list(indices_of_best_methods(y, best_func)) for y in ys.values]
-    ys_multihot = [[1.0 if ix in best_indices else 0.0 for ix in range(ys.shape[1])] for best_indices in ys_indices_vec]
+    #ys_multihot = ensure_not_all_one([[1 if ix in best_indices else 0 for ix in range(ys.shape[1])] for best_indices in ys_indices_vec])
+    ys_multihot = [[1 if ix in best_indices else 0 for ix in range(ys.shape[1])] for best_indices in ys_indices_vec]
 
     ys_categ = ys_onehot if use_one_hot else ys_multihot
 
     return xs, pd.DataFrame(ys_categ, index=ys.index, columns=ys.columns)
 
 
-def generate_binary_classification_problem(config, use_pandas=False):
+def generate_binary_classification_problem(config):
     best_func = min if config['ytype'] == 'gaps' else max
     ls_indices = [3, 4, 5, 6, 7]
 

@@ -18,8 +18,9 @@ module load GCC/4.9.3-2.25
 module load OpenMPI/1.10.2
 module load TensorFlow/1.4.0-Python-3.5.1
 module load pandas/0.18.0-Python-3.5.1
+module load HDF5/1.8.17
 
-export PYTHONPATH=$PYTHONPATH:/home/nhulschn/keras/lib/python3.5/site-packages
+#export PYTHONPATH=$PYTHONPATH:/home/nhulschn/keras/lib/python3.5/site-packages
 
 cd $PBS_O_WORKDIR
 

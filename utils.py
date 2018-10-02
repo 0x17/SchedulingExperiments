@@ -135,6 +135,16 @@ def argmin(elems):
             return ix
     return -1
 
+def argmax(elems):
+    maxval = max(elems)
+    for ix, elem in enumerate(elems):
+        if elem == maxval:
+            return ix
+    return -1
+
+def argmax_many(elems):
+    maxval = max(elems)
+    return [ ix for ix,elem in enumerate(elems) if elem == maxval ]
 
 def without(lst, elems):
     return [elem for elem in lst if elem not in elems]

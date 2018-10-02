@@ -17,7 +17,7 @@ def serialize_profits(jobset, heur_profits, instance_names):
 
 def serialize_profits_for_jobset(jobset):
     #path_to_results = 'j30_1000schedulesJAN18/' if jobset == 30 else 'NochEinBackupDerErgebnisse/j120_1000schedules/'
-    path_to_results = 'k30_1000schedules/'
+    path_to_results = 'l_1000schedules/'
     result_filenames = [path_to_results + entry for entry in os.listdir(path_to_results) if entry.endswith('Results.txt')]
     result_methods = [fn.replace('Results.txt', '').replace(path_to_results, '') for fn in result_filenames]
     heur_profits = {result_methods[ix]: csv_to_dict(result_filenames[ix]) for ix in range(len(result_filenames))}
@@ -26,7 +26,7 @@ def serialize_profits_for_jobset(jobset):
 
 
 def main():
-    serialize_profits_for_jobset(30)
+    serialize_profits_for_jobset('l')
     #serialize_profits_for_jobset(120)
 
 
